@@ -4,7 +4,7 @@ from functools import wraps
 from typing import get_type_hints, get_origin, get_args
 
 
-def hil_node(func):
+def human(func):
     # This runs at decoration time, not function-call time.
     hints = get_type_hints(func)
     return_type = hints.get("return", inspect.Signature.empty)
