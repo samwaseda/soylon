@@ -8,7 +8,7 @@ import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional
 
 from dotenv import load_dotenv
 from nio import (
@@ -168,9 +168,9 @@ class Bot:
     async def send_file(
         self,
         room_id: str,
-        data: Union[str, Path, bytes],
-        filename: Optional[str] = None,
-        mimetype: Optional[str] = None,
+        data: str | Path | bytes,
+        filename: str | None = None,
+        mimetype: str | None = None,
     ) -> None:
         """Upload a file (path or bytes) and send it to a room.
 
@@ -181,9 +181,7 @@ class Bot:
             data = Path(data).read_bytes()
         filename = filename or "file"
         mimetype = (
-            mimetype
-            or mimetypes.guess_type(filename)[0]
-            or "application/octet-stream"
+            mimetype or mimetypes.guess_type(filename)[0] or "application/octet-stream"
         )
         room = self.client.rooms.get(room_id)
         encrypt = bool(room and room.encrypted)
@@ -217,7 +215,9 @@ class Bot:
     ) -> None:
         """Render a matplotlib figure and send it as an image."""
         buffer = io.BytesIO()
-        figure.savefig(buffer, format=Path(filename).suffix.lstrip(".") or "png", **savefig_kwargs)
+        figure.savefig(
+            buffer, format=Path(filename).suffix.lstrip(".") or "png", **savefig_kwargs
+        )
         await self.send_file(room_id, buffer.getvalue(), filename)
 
     async def run(self) -> None:
