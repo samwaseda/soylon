@@ -74,6 +74,12 @@ messages, and warnings/errors for failed joins, stores and uploads. Configure
 it in your application with `logging.basicConfig(...)`; running
 `python -m soylon.bot` does so using `LOG_LEVEL`.
 
+## Reconnecting
+
+If syncing fails because of a network error, the bot retries with exponential
+backoff (1s doubling up to 60s, configurable via `bot.min_reconnect_delay` and
+`bot.max_reconnect_delay`). Login failures still raise.
+
 ## Limitations
 
 - No size or type limit on received files.

@@ -6,11 +6,13 @@ import logging
 import mimetypes
 import os
 import re
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Optional
 
+import aiohttp
 from dotenv import load_dotenv
 from nio import (
     AsyncClient,
@@ -102,6 +104,8 @@ class Bot:
         storage_dir: str | Path = "downloads",
     ) -> None:
         self.callback = callback
+        self.min_reconnect_delay = 1.0
+        self.max_reconnect_delay = 60.0
         self.storage_dir = Path(storage_dir)
         self.password = password
         self.client = AsyncClient(homeserver, user_id)
@@ -234,13 +238,28 @@ class Bot:
         )
         await self.send_file(room_id, buffer.getvalue(), filename)
 
+    async def _sync_with_reconnect(self) -> None:
+        """Run sync_forever, retrying with exponential backoff on connection errors."""
+        delay = self.min_reconnect_delay
+        while True:
+            started = time.monotonic()
+            try:
+                await self.client.sync_forever(timeout=30_000)
+                return
+            except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as error:
+                if time.monotonic() - started > self.max_reconnect_delay:
+                    delay = self.min_reconnect_delay  # it was healthy for a while
+                logger.warning("Sync failed (%r), retrying in %.0fs", error, delay)
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, self.max_reconnect_delay)
+
     async def run(self) -> None:
         try:
             response = await self.client.login(self.password)
             if not isinstance(response, LoginResponse):
                 raise RuntimeError(f"Login failed: {response}")
             logger.info("Logged in as %s", response.user_id)
-            await self.client.sync_forever(timeout=30_000)
+            await self._sync_with_reconnect()
         finally:
             await self.client.close()
 

@@ -1,4 +1,5 @@
 import asyncio
+import aiohttp
 import datetime
 import tempfile
 import unittest
@@ -187,6 +188,16 @@ class TestBot(unittest.TestCase):
             bot.client.room_send.call_args.kwargs["content"]["msgtype"], "m.image"
         )
         self.assertEqual(bot.client.upload.call_args.kwargs["filesize"], 7)
+
+    def test_sync_reconnects_with_backoff(self):
+        bot = make_bot(lambda m: None)
+        bot.client.sync_forever = AsyncMock(
+            side_effect=[aiohttp.ClientError(), asyncio.TimeoutError(), OSError(), None]
+        )
+        with patch("soylon.bot.asyncio.sleep", new=AsyncMock()) as sleep:
+            asyncio.run(bot._sync_with_reconnect())
+        self.assertEqual(bot.client.sync_forever.await_count, 4)
+        self.assertEqual([c.args[0] for c in sleep.await_args_list], [1.0, 2.0, 4.0])
 
     def test_invite_is_joined(self):
         bot = make_bot(lambda m: None)
