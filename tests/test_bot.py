@@ -1,5 +1,4 @@
 import asyncio
-import aiohttp
 import datetime
 import tempfile
 import unittest
@@ -7,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import aiohttp
 from nio import (
     DownloadError,
     RoomEncryptedMedia,
