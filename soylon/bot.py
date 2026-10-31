@@ -1,6 +1,8 @@
 import asyncio
 import datetime
 import inspect
+import io
+import mimetypes
 import os
 import re
 from collections.abc import Awaitable, Callable
@@ -18,6 +20,7 @@ from nio import (
     RoomEncryptedMedia,
     RoomMessageMedia,
     RoomMessageText,
+    UploadResponse,
 )
 from nio.crypto import decrypt_attachment
 from nio.exceptions import EncryptionError
@@ -161,6 +164,61 @@ class Bot:
             message_type="m.room.message",
             content={"msgtype": "m.text", "body": text},
         )
+
+    async def send_file(
+        self,
+        room_id: str,
+        data: Union[str, Path, bytes],
+        filename: Optional[str] = None,
+        mimetype: Optional[str] = None,
+    ) -> None:
+        """Upload a file (path or bytes) and send it to a room.
+
+        Images, audio and video are sent as such, anything else as a file.
+        """
+        if isinstance(data, (str, Path)):
+            filename = filename or Path(data).name
+            data = Path(data).read_bytes()
+        filename = filename or "file"
+        mimetype = (
+            mimetype
+            or mimetypes.guess_type(filename)[0]
+            or "application/octet-stream"
+        )
+        room = self.client.rooms.get(room_id)
+        encrypt = bool(room and room.encrypted)
+        response, keys = await self.client.upload(
+            lambda *_: io.BytesIO(data),
+            content_type=mimetype,
+            filename=filename,
+            encrypt=encrypt,
+            filesize=len(data),
+        )
+        if not isinstance(response, UploadResponse):
+            raise RuntimeError(f"Upload failed: {response}")
+        msgtype = {"image": "m.image", "audio": "m.audio", "video": "m.video"}.get(
+            mimetype.split("/")[0], "m.file"
+        )
+        content = {
+            "msgtype": msgtype,
+            "body": filename,
+            "info": {"mimetype": mimetype, "size": len(data)},
+        }
+        if keys:
+            content["file"] = {**keys, "url": response.content_uri}
+        else:
+            content["url"] = response.content_uri
+        await self.client.room_send(
+            room_id=room_id, message_type="m.room.message", content=content
+        )
+
+    async def send_figure(
+        self, room_id: str, figure, filename: str = "figure.png", **savefig_kwargs
+    ) -> None:
+        """Render a matplotlib figure and send it as an image."""
+        buffer = io.BytesIO()
+        figure.savefig(buffer, format=Path(filename).suffix.lstrip(".") or "png", **savefig_kwargs)
+        await self.send_file(room_id, buffer.getvalue(), filename)
 
     async def run(self) -> None:
         try:
