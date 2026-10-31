@@ -6,7 +6,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from nio import DownloadError, UploadResponse, RoomEncryptedMedia, RoomMessageMedia, RoomMessageText
+from nio import (
+    DownloadError,
+    RoomEncryptedMedia,
+    RoomMessageMedia,
+    RoomMessageText,
+    UploadResponse,
+)
 
 from soylon.bot import Bot
 
@@ -138,9 +144,7 @@ class TestBot(unittest.TestCase):
     def _upload_bot(self, encrypted=False, keys=None):
         bot = make_bot(lambda m: None)
         bot.client.rooms = {ROOM.room_id: SimpleNamespace(encrypted=encrypted)}
-        bot.client.upload = AsyncMock(
-            return_value=(UploadResponse("mxc://x/up"), keys)
-        )
+        bot.client.upload = AsyncMock(return_value=(UploadResponse("mxc://x/up"), keys))
         return bot
 
     def test_send_file_from_bytes_and_path(self):
@@ -149,7 +153,9 @@ class TestBot(unittest.TestCase):
         content = bot.client.room_send.call_args.kwargs["content"]
         self.assertEqual(content["msgtype"], "m.image")
         self.assertEqual(content["url"], "mxc://x/up")
-        self.assertEqual(bot.client.upload.call_args.kwargs["content_type"], "image/png")
+        self.assertEqual(
+            bot.client.upload.call_args.kwargs["content_type"], "image/png"
+        )
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "notes.txt"
@@ -177,7 +183,9 @@ class TestBot(unittest.TestCase):
         bot = self._upload_bot()
         figure = SimpleNamespace(savefig=lambda buf, format: buf.write(b"PNGDATA"))
         asyncio.run(bot.send_figure(ROOM.room_id, figure))
-        self.assertEqual(bot.client.room_send.call_args.kwargs["content"]["msgtype"], "m.image")
+        self.assertEqual(
+            bot.client.room_send.call_args.kwargs["content"]["msgtype"], "m.image"
+        )
         self.assertEqual(bot.client.upload.call_args.kwargs["filesize"], 7)
 
     def test_invite_is_joined(self):
