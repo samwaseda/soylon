@@ -1,6 +1,8 @@
 import asyncio
 import datetime
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -9,8 +11,10 @@ from nio import DownloadError, RoomEncryptedMedia, RoomMessageMedia, RoomMessage
 from soylon.bot import Bot
 
 
-def make_bot(callback):
-    bot = Bot(callback, "https://example.org", "@bot:example.org", "pw")
+def make_bot(callback, storage_dir=None):
+    storage_dir = storage_dir or tempfile.mkdtemp()
+    bot = Bot(callback, "https://example.org", "@bot:example.org", "pw", storage_dir)
+    bot.client.download = AsyncMock(return_value=SimpleNamespace(body=b"data"))
     bot.client.room_send = AsyncMock()
     bot.client.join = AsyncMock()
     return bot
@@ -71,9 +75,19 @@ class TestBot(unittest.TestCase):
         handle(bot, ev)
         att = seen[0].attachment
         self.assertEqual((att.kind, att.filename, att.mimetype), ("image", "cat.png", "image/png"))
-
-        bot.client.download = AsyncMock(return_value=SimpleNamespace(body=b"data"))
         self.assertEqual(asyncio.run(att.read()), b"data")
+
+    def test_media_is_stored_in_sender_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            seen = []
+            bot = make_bot(seen.append, tmp)
+            source = {"content": {"msgtype": "m.file", "filename": "../../evil.txt"}}
+            for _ in range(2):
+                handle(bot, event(RoomMessageMedia, url="mxc://x/y", mimetype=None, source=source))
+            first, second = (m.attachment.path for m in seen)
+            self.assertEqual(first, Path(tmp) / "alice_example.org" / "evil.txt")
+            self.assertEqual(second.name, "evil_1.txt")
+            self.assertEqual(first.read_bytes(), b"data")
 
     def test_text_message_has_no_attachment(self):
         seen = []
@@ -93,21 +107,22 @@ class TestBot(unittest.TestCase):
             iv="iv",
             source={"content": {"msgtype": "m.file"}},
         )
-        handle(bot, ev)
         bot.client.download = AsyncMock(return_value=SimpleNamespace(body=b"cipher"))
-        att = seen[0].attachment
-        self.assertEqual(att.kind, "file")
         with patch(
             "soylon.bot.decrypt_attachment",
             lambda *a: b"plain" if a[0] == b"cipher" else b"",
         ):
-            self.assertEqual(asyncio.run(att.read()), b"plain")
+            handle(bot, ev)
+        att = seen[0].attachment
+        self.assertEqual(att.kind, "file")
+        self.assertEqual(att.path.read_bytes(), b"plain")
 
-    def test_download_error_raises(self):
+    def test_download_error_still_calls_callback(self):
         seen = []
         bot = make_bot(seen.append)
-        handle(bot, event(RoomMessageMedia, url="mxc://x/y", mimetype=None))
         bot.client.download = AsyncMock(return_value=DownloadError("boom"))
+        handle(bot, event(RoomMessageMedia, url="mxc://x/y", mimetype=None))
+        self.assertIsNone(seen[0].attachment.path)
         with self.assertRaises(RuntimeError):
             asyncio.run(seen[0].attachment.read())
 

@@ -2,7 +2,9 @@ import asyncio
 import datetime
 import inspect
 import os
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Awaitable, Callable, Optional, Union
 
 from dotenv import load_dotenv
@@ -17,6 +19,7 @@ from nio import (
     RoomMessageText,
 )
 from nio.crypto import decrypt_attachment
+from nio.exceptions import EncryptionError
 
 
 @dataclass(frozen=True)
@@ -28,6 +31,7 @@ class Attachment:
     mimetype: Optional[str]
     _client: AsyncClient
     _event: Union[RoomMessageMedia, RoomEncryptedMedia]
+    path: Optional[Path] = None  # set once the file has been stored
 
     async def read(self) -> bytes:
         response = await self._client.download(self._event.url)
@@ -41,6 +45,20 @@ class Attachment:
                 self._event.iv,
             )
         return response.body
+
+
+def _safe_name(name: str, default: str) -> str:
+    name = re.sub(r"[^\w.-]", "_", Path(name).name).lstrip(".")
+    return name or default
+
+
+def _unique_path(directory: Path, filename: str) -> Path:
+    path = directory / filename
+    n = 1
+    while path.exists():
+        path = directory / f"{path.stem}_{n}{Path(filename).suffix}"
+        n += 1
+    return path
 
 
 @dataclass(frozen=True)
@@ -62,7 +80,8 @@ class Bot:
     """Thin layer between Matrix and a callback.
 
     The callback receives each new text, image or file message from other
-    users and may return a string (sent back to the same room) or None (no
+    users (media is first saved to disk under a per-sender folder, see
+    `Attachment.path`) and may return a string (sent back to the same room) or None (no
     reply). It can be a plain function or a coroutine function.
     """
 
@@ -72,8 +91,10 @@ class Bot:
         homeserver: str,
         user_id: str,
         password: str,
+        storage_dir: Union[str, Path] = "downloads",
     ) -> None:
         self.callback = callback
+        self.storage_dir = Path(storage_dir)
         self.password = password
         self.client = AsyncClient(homeserver, user_id)
         self._started_at = datetime.datetime.now()
@@ -90,6 +111,7 @@ class Bot:
             os.environ["HOMESERVER"],
             os.environ["USER_ID"],
             os.environ["PASSWORD"],
+            os.environ.get("STORAGE_DIR", "downloads"),
         )
 
     async def _on_invite(self, room: MatrixRoom, event: InviteMemberEvent) -> None:
@@ -111,6 +133,11 @@ class Bot:
                 _client=self.client,
                 _event=event,
             )
+            try:
+                path = await self._store(event.sender, attachment)
+            except (RuntimeError, EncryptionError, OSError):
+                path = None  # the callback can still call attachment.read() to retry
+            attachment = replace(attachment, path=path)
         reply = self.callback(
             Message(room.room_id, event.sender, event.body, sent_at, attachment)
         )
@@ -118,6 +145,14 @@ class Bot:
             reply = await reply
         if reply:
             await self.send(room.room_id, reply)
+
+    async def _store(self, sender: str, attachment: Attachment) -> Path:
+        """Save the file as-is under <storage_dir>/<sender>/ without inspecting it."""
+        directory = self.storage_dir / _safe_name(sender.lstrip("@"), "unknown")
+        directory.mkdir(parents=True, exist_ok=True)
+        path = _unique_path(directory, _safe_name(attachment.filename, "file"))
+        path.write_bytes(await attachment.read())
+        return path
 
     async def send(self, room_id: str, text: str) -> None:
         await self.client.room_send(
