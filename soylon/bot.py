@@ -2,6 +2,7 @@ import asyncio
 import datetime
 import inspect
 import io
+import logging
 import mimetypes
 import os
 import re
@@ -15,6 +16,7 @@ from nio import (
     AsyncClient,
     DownloadError,
     InviteMemberEvent,
+    JoinResponse,
     LoginResponse,
     MatrixRoom,
     RoomEncryptedMedia,
@@ -24,6 +26,8 @@ from nio import (
 )
 from nio.crypto import decrypt_attachment
 from nio.exceptions import EncryptionError
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -119,14 +123,19 @@ class Bot:
         )
 
     async def _on_invite(self, room: MatrixRoom, event: InviteMemberEvent) -> None:
-        await self.client.join(room.room_id)
+        logger.info("Invited to %s, joining", room.room_id)
+        response = await self.client.join(room.room_id)
+        if not isinstance(response, JoinResponse):
+            logger.warning("Joining %s failed: %s", room.room_id, response)
 
     async def _on_message(self, room: MatrixRoom, event) -> None:
         if event.sender == self.client.user_id:
             return
         sent_at = datetime.datetime.fromtimestamp(event.server_timestamp / 1000)
         if sent_at < self._started_at:
+            logger.debug("Ignoring old message in %s from %s", room.room_id, event.sender)
             return
+        logger.info("Message in %s from %s", room.room_id, event.sender)
         attachment = None
         if not isinstance(event, RoomMessageText):
             content = event.source.get("content", {})
@@ -140,6 +149,7 @@ class Bot:
             try:
                 path = await self._store(event.sender, attachment)
             except (RuntimeError, EncryptionError, OSError):
+                logger.exception("Could not store attachment from %s", event.sender)
                 path = None  # the callback can still call attachment.read() to retry
             attachment = replace(attachment, path=path)
         reply = self.callback(
@@ -156,6 +166,7 @@ class Bot:
         directory.mkdir(parents=True, exist_ok=True)
         path = _unique_path(directory, _safe_name(attachment.filename, "file"))
         path.write_bytes(await attachment.read())
+        logger.info("Stored %s", path)
         return path
 
     async def send(self, room_id: str, text: str) -> None:
@@ -164,6 +175,7 @@ class Bot:
             message_type="m.room.message",
             content={"msgtype": "m.text", "body": text},
         )
+        logger.info("Sent text to %s", room_id)
 
     async def send_file(
         self,
@@ -193,6 +205,7 @@ class Bot:
             filesize=len(data),
         )
         if not isinstance(response, UploadResponse):
+            logger.error("Upload of %r failed: %s", filename, response)
             raise RuntimeError(f"Upload failed: {response}")
         msgtype = {"image": "m.image", "audio": "m.audio", "video": "m.video"}.get(
             mimetype.split("/")[0], "m.file"
@@ -209,6 +222,7 @@ class Bot:
         await self.client.room_send(
             room_id=room_id, message_type="m.room.message", content=content
         )
+        logger.info("Sent %s %r to %s", msgtype, filename, room_id)
 
     async def send_figure(
         self, room_id: str, figure, filename: str = "figure.png", **savefig_kwargs
@@ -225,6 +239,7 @@ class Bot:
             response = await self.client.login(self.password)
             if not isinstance(response, LoginResponse):
                 raise RuntimeError(f"Login failed: {response}")
+            logger.info("Logged in as %s", response.user_id)
             await self.client.sync_forever(timeout=30_000)
         finally:
             await self.client.close()
@@ -238,6 +253,10 @@ def main() -> None:
             return "Send me text, images or files."
         return None
 
+    logging.basicConfig(
+        level=os.environ.get("LOG_LEVEL", "INFO"),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
     asyncio.run(Bot.from_env(respond).run())
 
 
