@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from nio import DownloadError, RoomEncryptedMedia, RoomMessageMedia, RoomMessageText
+from nio import DownloadError, UploadResponse, RoomEncryptedMedia, RoomMessageMedia, RoomMessageText
 
 from soylon.bot import Bot
 
@@ -134,6 +134,51 @@ class TestBot(unittest.TestCase):
         self.assertIsNone(seen[0].attachment.path)
         with self.assertRaises(RuntimeError):
             asyncio.run(seen[0].attachment.read())
+
+    def _upload_bot(self, encrypted=False, keys=None):
+        bot = make_bot(lambda m: None)
+        bot.client.rooms = {ROOM.room_id: SimpleNamespace(encrypted=encrypted)}
+        bot.client.upload = AsyncMock(
+            return_value=(UploadResponse("mxc://x/up"), keys)
+        )
+        return bot
+
+    def test_send_file_from_bytes_and_path(self):
+        bot = self._upload_bot()
+        asyncio.run(bot.send_file(ROOM.room_id, b"abc", "cat.png"))
+        content = bot.client.room_send.call_args.kwargs["content"]
+        self.assertEqual(content["msgtype"], "m.image")
+        self.assertEqual(content["url"], "mxc://x/up")
+        self.assertEqual(bot.client.upload.call_args.kwargs["content_type"], "image/png")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "notes.txt"
+            path.write_bytes(b"hello")
+            asyncio.run(bot.send_file(ROOM.room_id, path))
+        content = bot.client.room_send.call_args.kwargs["content"]
+        self.assertEqual((content["msgtype"], content["body"]), ("m.file", "notes.txt"))
+
+    def test_send_file_encrypted_room(self):
+        bot = self._upload_bot(encrypted=True, keys={"k": "key"})
+        asyncio.run(bot.send_file(ROOM.room_id, b"abc", "a.bin"))
+        content = bot.client.room_send.call_args.kwargs["content"]
+        self.assertTrue(bot.client.upload.call_args.kwargs["encrypt"])
+        self.assertEqual(content["file"], {"k": "key", "url": "mxc://x/up"})
+        self.assertNotIn("url", content)
+
+    def test_send_file_upload_error(self):
+        bot = self._upload_bot()
+        bot.client.upload.return_value = (SimpleNamespace(), None)
+        with self.assertRaises(RuntimeError):
+            asyncio.run(bot.send_file(ROOM.room_id, b"abc", "a.bin"))
+        bot.client.room_send.assert_not_called()
+
+    def test_send_figure(self):
+        bot = self._upload_bot()
+        figure = SimpleNamespace(savefig=lambda buf, format: buf.write(b"PNGDATA"))
+        asyncio.run(bot.send_figure(ROOM.room_id, figure))
+        self.assertEqual(bot.client.room_send.call_args.kwargs["content"]["msgtype"], "m.image")
+        self.assertEqual(bot.client.upload.call_args.kwargs["filesize"], 7)
 
     def test_invite_is_joined(self):
         bot = make_bot(lambda m: None)
