@@ -3,3 +3,4 @@
 !.env.example
 
 downloads/
+__pycache__/
