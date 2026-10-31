@@ -24,6 +24,7 @@ from nio import (
     RoomEncryptedMedia,
     RoomMessageMedia,
     RoomMessageText,
+    SyncResponse,
     UploadResponse,
 )
 from nio.crypto import decrypt_attachment
@@ -109,11 +110,7 @@ class Bot:
         self.storage_dir = Path(storage_dir)
         self.password = password
         self.client = AsyncClient(homeserver, user_id)
-        self._started_at = datetime.datetime.now()
         self.client.add_event_callback(self._on_invite, InviteMemberEvent)
-        self.client.add_event_callback(
-            self._on_message, (RoomMessageText, RoomMessageMedia, RoomEncryptedMedia)
-        )
 
     @classmethod
     def from_env(cls, callback: Callback) -> "Bot":
@@ -136,9 +133,6 @@ class Bot:
         if event.sender == self.client.user_id:
             return
         sent_at = datetime.datetime.fromtimestamp(event.server_timestamp / 1000)
-        if sent_at < self._started_at:
-            logger.debug("Ignoring old message in %s from %s", room.room_id, event.sender)
-            return
         logger.info("Message in %s from %s", room.room_id, event.sender)
         attachment = None
         if not isinstance(event, RoomMessageText):
@@ -259,6 +253,15 @@ class Bot:
             if not isinstance(response, LoginResponse):
                 raise RuntimeError(f"Login failed: {response}")
             logger.info("Logged in as %s", response.user_id)
+            # Messages are only handled from the sync token of this first sync
+            # onwards, so history is skipped without relying on the local clock.
+            sync_response = await self.client.sync(timeout=0, full_state=True)
+            if not isinstance(sync_response, SyncResponse):
+                raise RuntimeError(f"Initial sync failed: {sync_response}")
+            self.client.add_event_callback(
+                self._on_message,
+                (RoomMessageText, RoomMessageMedia, RoomEncryptedMedia),
+            )
             await self._sync_with_reconnect()
         finally:
             await self.client.close()
