@@ -1,0 +1,19 @@
+name: Unit tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unittest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          environment-file: .ci_support/environment.yml
+          miniforge-version: latest
+      - name: Run unit tests
+        shell: bash -l {0}
+        run: python -m unittest discover -s tests -t . -v
