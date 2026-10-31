@@ -39,7 +39,8 @@ asyncio.run(Bot.from_env(respond).run())
 
 The callback may be a plain function or a coroutine function. Return a string
 to reply in the same room, or `None` to stay silent. The bot ignores its own
-messages and anything sent before it started, and joins every room it is
+messages and everything that happened before its first sync (history is
+skipped using the sync token, not the local clock), and joins every room it is
 invited to.
 
 ### `Message`
@@ -69,8 +70,7 @@ Uploads are encrypted automatically in encrypted rooms.
 ## Logging
 
 `soylon` logs through the standard `logging` module (logger `soylon.bot`):
-`INFO` for logins, invites, messages and sends, `DEBUG` for ignored old
-messages, and warnings/errors for failed joins, stores and uploads. Configure
+`INFO` for logins, invites, messages and sends, and warnings/errors for failed joins, stores and uploads. Configure
 it in your application with `logging.basicConfig(...)`; running
 `python -m soylon.bot` does so using `LOG_LEVEL`.
 

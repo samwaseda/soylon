@@ -64,11 +64,10 @@ class TestBot(unittest.TestCase):
         handle(bot, event(RoomMessageText))
         bot.client.room_send.assert_not_called()
 
-    def test_ignores_own_and_old_messages(self):
+    def test_ignores_own_messages(self):
         calls = []
         bot = make_bot(calls.append)
         handle(bot, event(RoomMessageText, sender=bot.client.user_id))
-        handle(bot, event(RoomMessageText, offset=-3600))
         self.assertEqual(calls, [])
 
     def test_media_message_has_attachment(self):
