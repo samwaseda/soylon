@@ -3,9 +3,10 @@ import datetime
 import inspect
 import os
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Awaitable, Callable, Optional, Union
+from typing import Optional
 
 from dotenv import load_dotenv
 from nio import (
@@ -28,10 +29,10 @@ class Attachment:
 
     kind: str  # "image", "file", "audio" or "video"
     filename: str
-    mimetype: Optional[str]
+    mimetype: str | None
     _client: AsyncClient
-    _event: Union[RoomMessageMedia, RoomEncryptedMedia]
-    path: Optional[Path] = None  # set once the file has been stored
+    _event: RoomMessageMedia | RoomEncryptedMedia
+    path: Path | None = None  # set once the file has been stored
 
     async def read(self) -> bytes:
         response = await self._client.download(self._event.url)
@@ -67,11 +68,11 @@ class Message:
     sender: str
     body: str
     sent_at: datetime.datetime
-    attachment: Optional[Attachment] = None
+    attachment: Attachment | None = None
 
 
 Reply = Optional[str]
-Callback = Callable[[Message], Union[Reply, Awaitable[Reply]]]
+Callback = Callable[[Message], Reply | Awaitable[Reply]]
 
 _KINDS = {"m.image": "image", "m.audio": "audio", "m.video": "video"}
 
@@ -91,7 +92,7 @@ class Bot:
         homeserver: str,
         user_id: str,
         password: str,
-        storage_dir: Union[str, Path] = "downloads",
+        storage_dir: str | Path = "downloads",
     ) -> None:
         self.callback = callback
         self.storage_dir = Path(storage_dir)

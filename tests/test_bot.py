@@ -44,7 +44,9 @@ class TestBot(unittest.TestCase):
     def test_sync_callback_reply_is_sent(self):
         bot = make_bot(lambda m: f"echo {m.body}")
         handle(bot, event(RoomMessageText))
-        self.assertEqual(bot.client.room_send.call_args.kwargs["content"]["body"], "echo hi")
+        self.assertEqual(
+            bot.client.room_send.call_args.kwargs["content"]["body"], "echo hi"
+        )
         self.assertEqual(bot.client.room_send.call_args.kwargs["room_id"], ROOM.room_id)
 
     def test_async_callback_and_none_reply(self):
@@ -74,7 +76,9 @@ class TestBot(unittest.TestCase):
         )
         handle(bot, ev)
         att = seen[0].attachment
-        self.assertEqual((att.kind, att.filename, att.mimetype), ("image", "cat.png", "image/png"))
+        self.assertEqual(
+            (att.kind, att.filename, att.mimetype), ("image", "cat.png", "image/png")
+        )
         self.assertEqual(asyncio.run(att.read()), b"data")
 
     def test_media_is_stored_in_sender_folder(self):
@@ -83,7 +87,12 @@ class TestBot(unittest.TestCase):
             bot = make_bot(seen.append, tmp)
             source = {"content": {"msgtype": "m.file", "filename": "../../evil.txt"}}
             for _ in range(2):
-                handle(bot, event(RoomMessageMedia, url="mxc://x/y", mimetype=None, source=source))
+                handle(
+                    bot,
+                    event(
+                        RoomMessageMedia, url="mxc://x/y", mimetype=None, source=source
+                    ),
+                )
             first, second = (m.attachment.path for m in seen)
             self.assertEqual(first, Path(tmp) / "alice_example.org" / "evil.txt")
             self.assertEqual(second.name, "evil_1.txt")
