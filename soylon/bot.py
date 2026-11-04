@@ -133,7 +133,7 @@ class Bot:
         if event.sender == self.client.user_id:
             return
         sent_at = datetime.datetime.fromtimestamp(event.server_timestamp / 1000)
-        logger.info("Message in %s from %s", room.room_id, event.sender)
+        logger.info(f"Message '{event.body}' from {event.sender} in {room.room_id}")
         attachment = None
         if not isinstance(event, RoomMessageText):
             content = event.source.get("content", {})
