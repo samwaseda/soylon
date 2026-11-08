@@ -103,8 +103,10 @@ class Bot:
         user_id: str,
         password: str,
         storage_dir: str | Path = "downloads",
+        welcome_message: str | None = None,
     ) -> None:
         self.callback = callback
+        self.welcome_message = welcome_message
         self.min_reconnect_delay = 1.0
         self.max_reconnect_delay = 60.0
         self.storage_dir = Path(storage_dir)
@@ -113,7 +115,7 @@ class Bot:
         self.client.add_event_callback(self._on_invite, InviteMemberEvent)
 
     @classmethod
-    def from_env(cls, callback: Callback) -> "Bot":
+    def from_env(cls, callback: Callback, welcome_message: str | None = None) -> "Bot":
         load_dotenv()
         return cls(
             callback,
@@ -121,6 +123,7 @@ class Bot:
             os.environ["USER_ID"],
             os.environ["PASSWORD"],
             os.environ.get("STORAGE_DIR", "downloads"),
+            welcome_message=welcome_message,
         )
 
     async def _on_invite(self, room: MatrixRoom, event: InviteMemberEvent) -> None:
@@ -128,6 +131,8 @@ class Bot:
         response = await self.client.join(room.room_id)
         if not isinstance(response, JoinResponse):
             logger.warning("Joining %s failed: %s", room.room_id, response)
+        elif self.welcome_message:
+            await self.send(room.room_id, self.welcome_message)
 
     async def _on_message(self, room: MatrixRoom, event) -> None:
         if event.sender == self.client.user_id:
