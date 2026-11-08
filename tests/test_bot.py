@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 import aiohttp
 from nio import (
     DownloadError,
+    JoinResponse,
     RoomEncryptedMedia,
     RoomMessageMedia,
     RoomMessageText,
@@ -18,9 +19,16 @@ from nio import (
 from soylon.bot import Bot
 
 
-def make_bot(callback, storage_dir=None):
+def make_bot(callback, storage_dir=None, welcome_message=None):
     storage_dir = storage_dir or tempfile.mkdtemp()
-    bot = Bot(callback, "https://example.org", "@bot:example.org", "pw", storage_dir)
+    bot = Bot(
+        callback,
+        "https://example.org",
+        "@bot:example.org",
+        "pw",
+        storage_dir,
+        welcome_message=welcome_message,
+    )
     bot.client.download = AsyncMock(return_value=SimpleNamespace(body=b"data"))
     bot.client.room_send = AsyncMock()
     bot.client.join = AsyncMock()
@@ -200,8 +208,41 @@ class TestBot(unittest.TestCase):
 
     def test_invite_is_joined(self):
         bot = make_bot(lambda m: None)
+        bot.client.join.return_value = JoinResponse(ROOM.room_id)
         asyncio.run(bot._on_invite(ROOM, None))
         bot.client.join.assert_awaited_once_with(ROOM.room_id)
+        bot.client.room_send.assert_not_awaited()
+
+    def test_invite_sends_welcome_after_join(self):
+        bot = make_bot(lambda m: None, welcome_message="Hello!")
+        bot.client.join.return_value = JoinResponse(ROOM.room_id)
+        asyncio.run(bot._on_invite(ROOM, None))
+        bot.client.room_send.assert_awaited_once_with(
+            room_id=ROOM.room_id,
+            message_type="m.room.message",
+            content={"msgtype": "m.text", "body": "Hello!"},
+        )
+
+    def test_failed_join_does_not_send_welcome(self):
+        bot = make_bot(lambda m: None, welcome_message="Hello!")
+        bot.client.join.return_value = SimpleNamespace()
+        asyncio.run(bot._on_invite(ROOM, None))
+        bot.client.room_send.assert_not_awaited()
+
+    def test_from_env_accepts_welcome_message(self):
+        env = {
+            "HOMESERVER": "https://example.org",
+            "USER_ID": "@bot:example.org",
+            "PASSWORD": "pw",
+        }
+        with patch("soylon.bot.load_dotenv"), patch.dict("os.environ", env):
+            bot = Bot.from_env(lambda m: None, welcome_message="Hello!")
+        bot.client.join = AsyncMock(return_value=JoinResponse(ROOM.room_id))
+        bot.client.room_send = AsyncMock()
+        asyncio.run(bot._on_invite(ROOM, None))
+        self.assertEqual(
+            bot.client.room_send.await_args.kwargs["content"]["body"], "Hello!"
+        )
 
 
 if __name__ == "__main__":
