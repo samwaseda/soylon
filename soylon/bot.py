@@ -10,7 +10,6 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Optional
 
 import aiohttp
 from dotenv import load_dotenv
@@ -81,7 +80,7 @@ class Message:
     attachment: Attachment | None = None
 
 
-Reply = Optional[str]
+Reply = str | None
 Callback = Callable[[Message], Reply | Awaitable[Reply]]
 
 _KINDS = {"m.image": "image", "m.audio": "audio", "m.video": "video"}
@@ -245,7 +244,7 @@ class Bot:
             try:
                 await self.client.sync_forever(timeout=30_000)
                 return
-            except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as error:
+            except (TimeoutError, aiohttp.ClientError, OSError) as error:
                 if time.monotonic() - started > self.max_reconnect_delay:
                     delay = self.min_reconnect_delay  # it was healthy for a while
                 logger.warning("Sync failed (%r), retrying in %.0fs", error, delay)

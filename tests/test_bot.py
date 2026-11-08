@@ -199,7 +199,7 @@ class TestBot(unittest.TestCase):
     def test_sync_reconnects_with_backoff(self):
         bot = make_bot(lambda m: None)
         bot.client.sync_forever = AsyncMock(
-            side_effect=[aiohttp.ClientError(), asyncio.TimeoutError(), OSError(), None]
+            side_effect=[aiohttp.ClientError(), TimeoutError(), OSError(), None]
         )
         with patch("soylon.bot.asyncio.sleep", new=AsyncMock()) as sleep:
             asyncio.run(bot._sync_with_reconnect())
