@@ -253,7 +253,7 @@ class TestBot(unittest.TestCase):
 
         async def dispatch():
             for invite in events:
-                await bot.client._on_invited_rooms(invite, ROOM)
+                await bot._on_invite(ROOM, invite)
 
         asyncio.run(dispatch())
         bot.client.join.assert_awaited_once_with(ROOM.room_id)
