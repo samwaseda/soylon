@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 import aiohttp
 from nio import (
     DownloadError,
+    InviteMemberEvent,
     JoinResponse,
     RoomEncryptedMedia,
     RoomMessageMedia,
@@ -209,14 +210,20 @@ class TestBot(unittest.TestCase):
     def test_invite_is_joined(self):
         bot = make_bot(lambda m: None)
         bot.client.join.return_value = JoinResponse(ROOM.room_id)
-        asyncio.run(bot._on_invite(ROOM, None))
+        invite = event(
+            InviteMemberEvent, state_key=bot.client.user_id, membership="invite"
+        )
+        asyncio.run(bot._on_invite(ROOM, invite))
         bot.client.join.assert_awaited_once_with(ROOM.room_id)
         bot.client.room_send.assert_not_awaited()
 
     def test_invite_sends_welcome_after_join(self):
         bot = make_bot(lambda m: None, welcome_message="Hello!")
         bot.client.join.return_value = JoinResponse(ROOM.room_id)
-        asyncio.run(bot._on_invite(ROOM, None))
+        invite = event(
+            InviteMemberEvent, state_key=bot.client.user_id, membership="invite"
+        )
+        asyncio.run(bot._on_invite(ROOM, invite))
         bot.client.room_send.assert_awaited_once_with(
             room_id=ROOM.room_id,
             message_type="m.room.message",
@@ -226,8 +233,31 @@ class TestBot(unittest.TestCase):
     def test_failed_join_does_not_send_welcome(self):
         bot = make_bot(lambda m: None, welcome_message="Hello!")
         bot.client.join.return_value = SimpleNamespace()
-        asyncio.run(bot._on_invite(ROOM, None))
+        invite = event(
+            InviteMemberEvent, state_key=bot.client.user_id, membership="invite"
+        )
+        asyncio.run(bot._on_invite(ROOM, invite))
         bot.client.room_send.assert_not_awaited()
+
+    def test_only_own_invite_triggers_welcome(self):
+        bot = make_bot(lambda m: None, welcome_message="Hello!")
+        bot.client.join.return_value = JoinResponse(ROOM.room_id)
+        events = [
+            event(InviteMemberEvent, state_key="@alice:example.org", membership="join"),
+            event(
+                InviteMemberEvent, state_key="@other:example.org", membership="invite"
+            ),
+            event(InviteMemberEvent, state_key=bot.client.user_id, membership="join"),
+            event(InviteMemberEvent, state_key=bot.client.user_id, membership="invite"),
+        ]
+
+        async def dispatch():
+            for invite in events:
+                await bot.client._on_invited_rooms(invite, ROOM)
+
+        asyncio.run(dispatch())
+        bot.client.join.assert_awaited_once_with(ROOM.room_id)
+        bot.client.room_send.assert_awaited_once()
 
     def test_from_env_accepts_welcome_message(self):
         env = {
@@ -239,7 +269,10 @@ class TestBot(unittest.TestCase):
             bot = Bot.from_env(lambda m: None, welcome_message="Hello!")
         bot.client.join = AsyncMock(return_value=JoinResponse(ROOM.room_id))
         bot.client.room_send = AsyncMock()
-        asyncio.run(bot._on_invite(ROOM, None))
+        invite = event(
+            InviteMemberEvent, state_key=bot.client.user_id, membership="invite"
+        )
+        asyncio.run(bot._on_invite(ROOM, invite))
         self.assertEqual(
             bot.client.room_send.await_args.kwargs["content"]["body"], "Hello!"
         )
