@@ -126,6 +126,8 @@ class Bot:
         )
 
     async def _on_invite(self, room: MatrixRoom, event: InviteMemberEvent) -> None:
+        if event.state_key != self.client.user_id or event.membership != "invite":
+            return
         logger.info("Invited to %s, joining", room.room_id)
         response = await self.client.join(room.room_id)
         if not isinstance(response, JoinResponse):
@@ -283,7 +285,7 @@ def main() -> None:
         level=os.environ.get("LOG_LEVEL", "INFO"),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    asyncio.run(Bot.from_env(respond).run())
+    asyncio.run(Bot.from_env(respond, welcome_message="Hello!").run())
 
 
 if __name__ == "__main__":
