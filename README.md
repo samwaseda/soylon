@@ -78,6 +78,24 @@ await bot.send_figure(room_id, matplotlib_figure)      # any object with .savefi
 
 Uploads are encrypted automatically in encrypted rooms.
 
+### Converting user input
+
+`convert_input` converts a string using a type's constructor, with special
+handling for booleans:
+
+```python
+from soylon.helper import convert_input
+
+number = convert_input(int, "42")
+enabled = convert_input(bool, "yes")
+```
+
+Boolean input is case-insensitive and ignores surrounding whitespace. It accepts
+`1`, `true`, `t`, `yes`, `y`, `on`, `enable` and `enabled`, and their false
+counterparts `0`, `false`, `f`, `no`, `n`, `off`, `disable` and `disabled`.
+Other boolean input raises `ValueError`. Other types receive the original string
+unchanged; their normal constructor behavior and errors apply.
+
 ## Logging
 
 `soylon` logs through the standard `logging` module (logger `soylon.bot`):
