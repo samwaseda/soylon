@@ -47,6 +47,16 @@ directly) is sent after a successful join; by default no message is sent.
 ### `Message`
 
 `room_id`, `sender`, `body`, `sent_at` and `attachment` (`None` for plain text).
+`event_id` identifies the message; `thread_id` is the thread root event ID for
+messages in a thread, or `None` otherwise. A thread root itself does not
+identify itself as belonging to a thread.
+
+For an explicit reply, `reply_to_event_id` identifies the target and `reply_to`
+contains its `event_id`, `sender`, `body` and `sent_at`. The bot fetches the
+target before calling the callback; `reply_to` is `None` if the fetch fails,
+and its `body` can be `None` if the event is redacted or cannot be decrypted.
+Thread fallback reply relations are not treated as explicit replies. Returned
+callback strings are sent to the room, not automatically into a thread.
 
 ### Receiving files and images
 

@@ -12,6 +12,8 @@ from nio import (
     InviteMemberEvent,
     JoinResponse,
     RoomEncryptedMedia,
+    RoomGetEventError,
+    RoomGetEventResponse,
     RoomMessageMedia,
     RoomMessageText,
     UploadResponse,
@@ -42,6 +44,7 @@ def event(cls, sender="@alice:example.org", body="hi", offset=10, source=None, *
     ev.__dict__.update(
         sender=sender,
         body=body,
+        event_id="$incoming",
         server_timestamp=int(ts * 1000),
         source=source or {"content": {}},
         **attrs,
@@ -117,6 +120,138 @@ class TestBot(unittest.TestCase):
         seen = []
         handle(make_bot(seen.append), event(RoomMessageText))
         self.assertIsNone(seen[0].attachment)
+
+    def test_reply_metadata_is_fetched(self):
+        seen = []
+        bot = make_bot(seen.append)
+        bot.client.room_get_event = AsyncMock(
+            return_value=RoomGetEventResponse.from_dict(
+                {
+                    "type": "m.room.message",
+                    "event_id": "$parent",
+                    "sender": "@bob:example.org",
+                    "origin_server_ts": 1000000,
+                    "content": {"msgtype": "m.text", "body": "original"},
+                }
+            )
+        )
+        handle(
+            bot,
+            event(
+                RoomMessageText,
+                source={
+                    "content": {
+                        "m.relates_to": {"m.in_reply_to": {"event_id": "$parent"}}
+                    }
+                },
+            ),
+        )
+        message = seen[0]
+        self.assertEqual(message.event_id, "$incoming")
+        self.assertIsNone(message.thread_id)
+        self.assertEqual(message.reply_to_event_id, "$parent")
+        self.assertEqual(message.reply_to.event_id, "$parent")
+        self.assertEqual(message.reply_to.sender, "@bob:example.org")
+        self.assertEqual(message.reply_to.body, "original")
+        self.assertEqual(
+            message.reply_to.sent_at, datetime.datetime.fromtimestamp(1000)
+        )
+        bot.client.room_get_event.assert_awaited_once_with(ROOM.room_id, "$parent")
+
+    def test_reply_metadata_without_body(self):
+        seen = []
+        bot = make_bot(seen.append)
+        response = RoomGetEventResponse()
+        response.event = SimpleNamespace(
+            sender="@bob:example.org", server_timestamp=1000000
+        )
+        bot.client.room_get_event = AsyncMock(return_value=response)
+        handle(
+            bot,
+            event(
+                RoomMessageText,
+                source={
+                    "content": {
+                        "m.relates_to": {"m.in_reply_to": {"event_id": "$parent"}}
+                    }
+                },
+            ),
+        )
+        self.assertEqual(seen[0].reply_to.sender, "@bob:example.org")
+        self.assertIsNone(seen[0].reply_to.body)
+
+    def test_thread_fallback_is_not_an_explicit_reply(self):
+        seen = []
+        bot = make_bot(seen.append)
+        bot.client.room_get_event = AsyncMock()
+        handle(
+            bot,
+            event(
+                RoomMessageText,
+                source={
+                    "content": {
+                        "m.relates_to": {
+                            "rel_type": "m.thread",
+                            "event_id": "$root",
+                            "m.in_reply_to": {"event_id": "$previous"},
+                            "is_falling_back": True,
+                        }
+                    }
+                },
+            ),
+        )
+        self.assertEqual(seen[0].thread_id, "$root")
+        self.assertIsNone(seen[0].reply_to_event_id)
+        self.assertIsNone(seen[0].reply_to)
+        bot.client.room_get_event.assert_not_awaited()
+
+    def test_reply_in_thread_with_unavailable_target(self):
+        for result in (RoomGetEventError("not found"), aiohttp.ClientError("offline")):
+            with self.subTest(result=result):
+                seen = []
+                bot = make_bot(seen.append)
+                bot.client.room_get_event = AsyncMock(
+                    side_effect=result if isinstance(result, Exception) else None,
+                    return_value=result,
+                )
+                handle(
+                    bot,
+                    event(
+                        RoomMessageMedia,
+                        url="mxc://x/y",
+                        mimetype=None,
+                        source={
+                            "content": {
+                                "m.relates_to": {
+                                    "rel_type": "m.thread",
+                                    "event_id": "$root",
+                                    "m.in_reply_to": {"event_id": "$parent"},
+                                }
+                            }
+                        },
+                    ),
+                )
+                self.assertEqual(seen[0].thread_id, "$root")
+                self.assertEqual(seen[0].reply_to_event_id, "$parent")
+                self.assertIsNone(seen[0].reply_to)
+                self.assertIsNotNone(seen[0].attachment)
+
+    def test_missing_or_malformed_relations(self):
+        for relation in (None, {}, {"m.in_reply_to": "invalid"}):
+            with self.subTest(relation=relation):
+                seen = []
+                bot = make_bot(seen.append)
+                bot.client.room_get_event = AsyncMock()
+                handle(
+                    bot,
+                    event(
+                        RoomMessageText, source={"content": {"m.relates_to": relation}}
+                    ),
+                )
+                self.assertIsNone(seen[0].thread_id)
+                self.assertIsNone(seen[0].reply_to_event_id)
+                self.assertIsNone(seen[0].reply_to)
+                bot.client.room_get_event.assert_not_awaited()
 
     def test_encrypted_media_is_decrypted(self):
         seen = []
