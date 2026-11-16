@@ -227,11 +227,15 @@ class Bot:
         timestamp = getattr(event, "server_timestamp", None)
         if not isinstance(sender, str) or not isinstance(timestamp, int):
             return None
+        try:
+            sent_at = datetime.datetime.fromtimestamp(timestamp / 1000)
+        except (ValueError, OverflowError, OSError):
+            return None
         return ReplyMetadata(
             event_id=event_id,
             sender=sender,
             body=getattr(event, "body", None),
-            sent_at=datetime.datetime.fromtimestamp(timestamp / 1000),
+            sent_at=sent_at,
         )
 
     async def _store(self, sender: str, attachment: Attachment) -> Path:
