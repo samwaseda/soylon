@@ -21,6 +21,7 @@ from nio import (
     LoginResponse,
     MatrixRoom,
     RoomEncryptedMedia,
+    RoomGetEventResponse,
     RoomMessageMedia,
     RoomMessageText,
     SyncResponse,
@@ -72,12 +73,24 @@ def _unique_path(directory: Path, filename: str) -> Path:
 
 
 @dataclass(frozen=True)
+class ReplyMetadata:
+    event_id: str
+    sender: str
+    body: str | None
+    sent_at: datetime.datetime
+
+
+@dataclass(frozen=True)
 class Message:
     room_id: str
     sender: str
     body: str
     sent_at: datetime.datetime
     attachment: Attachment | None = None
+    event_id: str | None = None
+    thread_id: str | None = None
+    reply_to_event_id: str | None = None
+    reply_to: ReplyMetadata | None = None
 
 
 Reply = str | None
@@ -140,9 +153,29 @@ class Bot:
             return
         sent_at = datetime.datetime.fromtimestamp(event.server_timestamp / 1000)
         logger.info(f"Message '{event.body}' from {event.sender} in {room.room_id}")
+        content = event.source.get("content", {})
+        relation = content.get("m.relates_to", {})
+        if not isinstance(relation, dict):
+            relation = {}
+        thread_id = None
+        if relation.get("rel_type") == "m.thread":
+            thread_id = relation.get("event_id")
+            if not isinstance(thread_id, str):
+                thread_id = None
+        reply_to_event_id = None
+        in_reply_to = relation.get("m.in_reply_to")
+        if isinstance(in_reply_to, dict) and not (
+            relation.get("rel_type") == "m.thread"
+            and relation.get("is_falling_back") is True
+        ):
+            target = in_reply_to.get("event_id")
+            if isinstance(target, str) and target:
+                reply_to_event_id = target
+        reply_to = None
+        if reply_to_event_id:
+            reply_to = await self._reply_metadata(room.room_id, reply_to_event_id)
         attachment = None
         if not isinstance(event, RoomMessageText):
-            content = event.source.get("content", {})
             attachment = Attachment(
                 kind=_KINDS.get(content.get("msgtype"), "file"),
                 filename=content.get("filename") or event.body,
@@ -157,12 +190,53 @@ class Bot:
                 path = None  # the callback can still call attachment.read() to retry
             attachment = replace(attachment, path=path)
         reply = self.callback(
-            Message(room.room_id, event.sender, event.body, sent_at, attachment)
+            Message(
+                room.room_id,
+                event.sender,
+                event.body,
+                sent_at,
+                attachment,
+                event_id=event.event_id,
+                thread_id=thread_id,
+                reply_to_event_id=reply_to_event_id,
+                reply_to=reply_to,
+            )
         )
         if inspect.isawaitable(reply):
             reply = await reply
         if reply:
             await self.send(room.room_id, reply)
+
+    async def _reply_metadata(
+        self, room_id: str, event_id: str
+    ) -> ReplyMetadata | None:
+        try:
+            response = await self.client.room_get_event(room_id, event_id)
+        except (TimeoutError, aiohttp.ClientError, OSError):
+            logger.warning(
+                "Could not fetch replied-to event %s", event_id, exc_info=True
+            )
+            return None
+        if not isinstance(response, RoomGetEventResponse):
+            logger.warning(
+                "Could not fetch replied-to event %s: %s", event_id, response
+            )
+            return None
+        event = response.event
+        sender = getattr(event, "sender", None)
+        timestamp = getattr(event, "server_timestamp", None)
+        if not isinstance(sender, str) or not isinstance(timestamp, int):
+            return None
+        try:
+            sent_at = datetime.datetime.fromtimestamp(timestamp / 1000)
+        except (ValueError, OverflowError, OSError):
+            return None
+        return ReplyMetadata(
+            event_id=event_id,
+            sender=sender,
+            body=getattr(event, "body", None),
+            sent_at=sent_at,
+        )
 
     async def _store(self, sender: str, attachment: Attachment) -> Path:
         """Save the file as-is under <storage_dir>/<sender>/ without inspecting it."""
