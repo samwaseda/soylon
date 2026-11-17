@@ -283,7 +283,7 @@ class Bot:
                     await self.send_file(room_id, Path(archive))
             else:
                 await self.send_file(room_id, reply)
-        elif callable(getattr(reply, "savefig", None)) self.convert_files:
+        elif callable(getattr(reply, "savefig", None)) and self.convert_files:
             await self.send_figure(room_id, reply)
         elif reply:
             await self.send(room_id, str(reply))
