@@ -136,6 +136,7 @@ class Bot:
         storage_dir: str | Path = "downloads",
         welcome_message: str | None = None,
         max_file_size: int | None = None,
+        convert_files: bool = True,
     ) -> None:
         if max_file_size is not None and (
             not isinstance(max_file_size, int)
@@ -150,6 +151,7 @@ class Bot:
         self.max_reconnect_delay = 60.0
         self.storage_dir = Path(storage_dir)
         self.password = password
+        self.convert_files = convert_files
         self.client = AsyncClient(homeserver, user_id)
         self.client.add_event_callback(self._on_invite, InviteMemberEvent)
 
@@ -159,6 +161,7 @@ class Bot:
         callback: Callback,
         welcome_message: str | None = None,
         max_file_size: int | None = None,
+        convert_files: bool = True,
     ) -> "Bot":
         load_dotenv()
         required = ("HOMESERVER", "USER_ID", "PASSWORD")
@@ -181,6 +184,7 @@ class Bot:
             os.environ.get("STORAGE_DIR", "downloads"),
             welcome_message=welcome_message,
             max_file_size=max_file_size,
+            convert_files=convert_files
         )
 
     async def _on_invite(self, room: MatrixRoom, event: InviteMemberEvent) -> None:
@@ -251,18 +255,27 @@ class Bot:
             reply = await reply
         if isinstance(reply, (dict, tuple)):
             await self.send(room.room_id, str(reply))
-            items = reply.items() if isinstance(reply, dict) else enumerate(reply)
-            for key, item in items:
-                if isinstance(item, Path) or callable(getattr(item, "savefig", None)):
-                    label = f"key {key!r}" if isinstance(reply, dict) else f"index {key}"
-                    await self.send(room.room_id, f"Sending {label}:")
-                    await self._send_reply(room.room_id, item)
+            if self.convert_files:
+                items = reply.items() if isinstance(reply, dict) else enumerate(reply)
+                for key, item in items:
+                    if isinstance(item, Path) or callable(
+                        getattr(item, "savefig", None)
+                    ):
+                        label = (
+                            f"key {key!r}"
+                            if isinstance(reply, dict)
+                            else f"index {key}"
+                        )
+                        await self.send(room.room_id, f"Sending {label}:")
+                        await self._send_reply(room.room_id, item)
         else:
             await self._send_reply(room.room_id, reply)
 
     async def _send_reply(self, room_id: str, reply: Item) -> None:
         if isinstance(reply, Path):
-            if reply.is_dir():
+            if not self.convert_files:
+                await self.send(room_id, str(reply))
+            elif reply.is_dir():
                 with tempfile.TemporaryDirectory() as tmp:
                     archive = shutil.make_archive(
                         str(Path(tmp) / (reply.resolve().name or "directory")),
@@ -273,7 +286,10 @@ class Bot:
             else:
                 await self.send_file(room_id, reply)
         elif callable(getattr(reply, "savefig", None)):
-            await self.send_figure(room_id, reply)
+            if self.convert_files:
+                await self.send_figure(room_id, reply)
+            else:
+                await self.send(room_id, str(reply))
         elif reply:
             await self.send(room_id, reply)
 

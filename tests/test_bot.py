@@ -133,6 +133,39 @@ class TestBot(unittest.TestCase):
         )
         self.assertEqual(bot.client.upload.call_args.kwargs["filesize"], 7)
 
+    def test_callback_path_and_figure_are_text_when_conversion_is_disabled(self):
+        path = Path("cat.png")
+        figure = SimpleNamespace(savefig=lambda buf, format: buf.write(b"PNGDATA"))
+        for reply in (path, figure):
+            with self.subTest(reply=reply):
+                bot = make_bot(lambda message: reply)
+                bot.convert_files = False
+                handle(bot, event(RoomMessageText))
+                self.assertEqual(
+                    bot.client.room_send.call_args.kwargs["content"],
+                    {"msgtype": "m.text", "body": str(reply)},
+                )
+
+    def test_callback_composites_are_text_when_conversion_is_disabled(self):
+        for reply in ({"file": Path("notes.txt")}, (), {}):
+            with self.subTest(reply=reply):
+                bot = make_bot(lambda message: reply)
+                bot.convert_files = False
+                handle(bot, event(RoomMessageText))
+                self.assertEqual(
+                    bot.client.room_send.call_args.kwargs["content"],
+                    {"msgtype": "m.text", "body": str(reply)},
+                )
+                self.assertEqual(bot.client.room_send.await_count, 1)
+
+    def test_callback_empty_text_is_silent_when_conversion_is_disabled(self):
+        for reply in (None, ""):
+            with self.subTest(reply=reply):
+                bot = make_bot(lambda message: reply)
+                bot.convert_files = False
+                handle(bot, event(RoomMessageText))
+                bot.client.room_send.assert_not_awaited()
+
     def test_callback_dict_sends_composite_and_attachments_in_order(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "notes.txt"
