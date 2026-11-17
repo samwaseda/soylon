@@ -19,6 +19,7 @@ from nio import (
     InviteMemberEvent,
     JoinResponse,
     LoginResponse,
+    LogoutResponse,
     MatrixRoom,
     RoomEncryptedMedia,
     RoomGetEventResponse,
@@ -356,7 +357,13 @@ class Bot:
             )
             await self._sync_with_reconnect()
         finally:
-            await self.client.close()
+            try:
+                if self.client.access_token:
+                    response = await self.client.logout()
+                    if not isinstance(response, LogoutResponse):
+                        logger.warning("Logout failed: %s", response)
+            finally:
+                await self.client.close()
 
 
 def main() -> None:
