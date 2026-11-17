@@ -141,6 +141,23 @@ class TestBot(unittest.TestCase):
                 handle(bot, event(RoomMessageText))
             bot.client.room_send.assert_not_called()
 
+    def test_callback_uploads_respect_size_limit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "file.txt"
+            path.write_bytes(b"hello")
+            directory = Path(tmp) / "directory"
+            directory.mkdir()
+            figure = SimpleNamespace(savefig=lambda buf, format: buf.write(b"PNGDATA"))
+            for reply in (path, directory, figure):
+                with self.subTest(reply=reply):
+                    bot = self._upload_bot()
+                    bot.max_file_size = 1
+                    bot.callback = lambda message, reply=reply: reply
+                    with self.assertRaisesRegex(ValueError, "maximum upload size"):
+                        handle(bot, event(RoomMessageText))
+                    bot.client.upload.assert_not_called()
+                    bot.client.room_send.assert_not_called()
+
     def test_ignores_own_messages(self):
         calls = []
         bot = make_bot(calls.append)
@@ -373,6 +390,33 @@ class TestBot(unittest.TestCase):
         content = bot.client.room_send.call_args.kwargs["content"]
         self.assertEqual((content["msgtype"], content["body"]), ("m.file", "notes.txt"))
 
+    def test_send_file_size_limit_boundary(self):
+        bot = self._upload_bot()
+        bot.max_file_size = 3
+        asyncio.run(bot.send_file(ROOM.room_id, b"abc", "a.bin"))
+        with self.assertRaisesRegex(ValueError, "3 bytes"):
+            asyncio.run(bot.send_file(ROOM.room_id, b"abcd", "a.bin"))
+        self.assertEqual(bot.client.upload.await_count, 1)
+        bot.max_file_size = 0
+        asyncio.run(bot.send_file(ROOM.room_id, b"", "empty.bin"))
+        with self.assertRaises(ValueError):
+            asyncio.run(bot.send_file(ROOM.room_id, b"a", "a.bin"))
+        self.assertEqual(bot.client.upload.await_count, 2)
+
+    def test_invalid_max_file_size(self):
+        for limit in (-1, 1.5, True):
+            with (
+                self.subTest(limit=limit),
+                self.assertRaisesRegex(ValueError, "max_file_size"),
+            ):
+                Bot(
+                    lambda m: None,
+                    "https://example.org",
+                    "@bot:example.org",
+                    "pw",
+                    max_file_size=limit,
+                )
+
     def test_send_file_encrypted_room(self):
         bot = self._upload_bot(encrypted=True, keys={"k": "key"})
         asyncio.run(bot.send_file(ROOM.room_id, b"abc", "a.bin"))
@@ -511,7 +555,10 @@ class TestBot(unittest.TestCase):
             "PASSWORD": "pw",
         }
         with patch("soylon.bot.load_dotenv"), patch.dict("os.environ", env):
-            bot = Bot.from_env(lambda m: None, welcome_message="Hello!")
+            bot = Bot.from_env(
+                lambda m: None, welcome_message="Hello!", max_file_size=10
+            )
+        self.assertEqual(bot.max_file_size, 10)
         bot.client.join = AsyncMock(return_value=JoinResponse(ROOM.room_id))
         bot.client.room_send = AsyncMock()
         invite = event(

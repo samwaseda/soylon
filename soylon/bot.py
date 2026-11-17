@@ -76,6 +76,13 @@ def _unique_path(directory: Path, filename: str) -> Path:
     return path
 
 
+def _read_file(path: Path, max_file_size: int | None) -> bytes:
+    with path.open("rb") as file:
+        return (
+            file.read(max_file_size + 1) if max_file_size is not None else file.read()
+        )
+
+
 @dataclass(frozen=True)
 class ReplyMetadata:
     event_id: str
@@ -125,9 +132,17 @@ class Bot:
         password: str,
         storage_dir: str | Path = "downloads",
         welcome_message: str | None = None,
+        max_file_size: int | None = None,
     ) -> None:
+        if max_file_size is not None and (
+            not isinstance(max_file_size, int)
+            or isinstance(max_file_size, bool)
+            or max_file_size < 0
+        ):
+            raise ValueError("max_file_size must be a non-negative integer or None")
         self.callback = callback
         self.welcome_message = welcome_message
+        self.max_file_size = max_file_size
         self.min_reconnect_delay = 1.0
         self.max_reconnect_delay = 60.0
         self.storage_dir = Path(storage_dir)
@@ -136,7 +151,12 @@ class Bot:
         self.client.add_event_callback(self._on_invite, InviteMemberEvent)
 
     @classmethod
-    def from_env(cls, callback: Callback, welcome_message: str | None = None) -> "Bot":
+    def from_env(
+        cls,
+        callback: Callback,
+        welcome_message: str | None = None,
+        max_file_size: int | None = None,
+    ) -> "Bot":
         load_dotenv()
         required = ("HOMESERVER", "USER_ID", "PASSWORD")
         missing = [name for name in required if name not in os.environ]
@@ -157,6 +177,7 @@ class Bot:
             os.environ["PASSWORD"],
             os.environ.get("STORAGE_DIR", "downloads"),
             welcome_message=welcome_message,
+            max_file_size=max_file_size,
         )
 
     async def _on_invite(self, room: MatrixRoom, event: InviteMemberEvent) -> None:
@@ -299,10 +320,15 @@ class Bot:
         """Upload a file (path or bytes) and send it to a room.
 
         Images, audio and video are sent as such, anything else as a file.
+        Raises ValueError if the configured upload size limit is exceeded.
         """
         if isinstance(data, (str, Path)):
             filename = filename or Path(data).name
-            data = Path(data).read_bytes()
+            data = _read_file(Path(data), self.max_file_size)
+        if self.max_file_size is not None and len(data) > self.max_file_size:
+            raise ValueError(
+                f"File exceeds maximum upload size of {self.max_file_size} bytes"
+            )
         filename = filename or "file"
         mimetype = (
             mimetype or mimetypes.guess_type(filename)[0] or "application/octet-stream"

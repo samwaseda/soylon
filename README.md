@@ -80,6 +80,12 @@ await bot.send_figure(room_id, matplotlib_figure)      # any object with .savefi
 
 Uploads are encrypted automatically in encrypted rooms.
 
+Set `max_file_size` on `Bot` or `Bot.from_env` to limit uploads in bytes, for
+example `Bot.from_env(respond, max_file_size=10 * 1024 * 1024)`. The default
+`None` imposes no limit. The limit applies to files, rendered figures and ZIP
+archives, including callback replies; exceeding it raises `ValueError` before
+uploading. It does not limit incoming attachments.
+
 ### Converting user input
 
 `convert_input` converts a string using a type's constructor, with special
