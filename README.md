@@ -38,7 +38,9 @@ asyncio.run(Bot.from_env(respond, welcome_message="Hello!").run())
 ```
 
 The callback may be a plain function or a coroutine function. Return a string
-to reply in the same room, or `None` to stay silent. The bot ignores its own
+to reply in the same room, a `pathlib.Path` to send a file or a ZIP archive of
+a directory, a figure with a `savefig` method to send an image, or `None` to
+stay silent. A missing file path raises an error. The bot ignores its own
 messages and everything that happened before its first sync (history is
 skipped using the sync token, not the local clock), and joins every room it is
 invited to. The optional `welcome_message` argument (also available on `Bot`

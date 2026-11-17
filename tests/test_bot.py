@@ -1,7 +1,9 @@
 import asyncio
 import datetime
+import io
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -78,6 +80,66 @@ class TestBot(unittest.TestCase):
         bot = make_bot(cb)
         handle(bot, event(RoomMessageText))
         bot.client.room_send.assert_not_called()
+
+    def test_callback_file_path_is_uploaded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "cat.png"
+            path.write_bytes(b"image")
+
+            async def cb(message):
+                return path
+
+            bot = self._upload_bot()
+            bot.callback = cb
+            handle(bot, event(RoomMessageText))
+        content = bot.client.room_send.call_args.kwargs["content"]
+        self.assertEqual((content["msgtype"], content["body"]), ("m.image", "cat.png"))
+        self.assertEqual(bot.client.upload.call_args.kwargs["filesize"], 5)
+
+    def test_callback_directory_is_uploaded_as_zip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp) / "report"
+            (directory / "empty").mkdir(parents=True)
+            (directory / "notes.txt").write_text("hello")
+            bot = self._upload_bot()
+            bot.callback = lambda message: directory
+            captured = {}
+
+            async def upload(provider, **kwargs):
+                captured["archive"] = provider().read()
+                captured["filename"] = kwargs["filename"]
+                return UploadResponse("mxc://x/up"), None
+
+            bot.client.upload.side_effect = upload
+            handle(bot, event(RoomMessageText))
+
+        self.assertEqual(captured["filename"], "report.zip")
+        with zipfile.ZipFile(io.BytesIO(captured["archive"])) as archive:
+            self.assertEqual(archive.read("notes.txt"), b"hello")
+            self.assertIn("empty/", archive.namelist())
+        content = bot.client.room_send.call_args.kwargs["content"]
+        self.assertEqual(
+            (content["msgtype"], content["body"]), ("m.file", "report.zip")
+        )
+
+    def test_callback_figure_is_rendered(self):
+        figure = SimpleNamespace(savefig=lambda buf, format: buf.write(b"PNGDATA"))
+        bot = self._upload_bot()
+        bot.callback = lambda message: figure
+        handle(bot, event(RoomMessageText))
+        content = bot.client.room_send.call_args.kwargs["content"]
+        self.assertEqual(
+            (content["msgtype"], content["body"]), ("m.image", "figure.png")
+        )
+        self.assertEqual(bot.client.upload.call_args.kwargs["filesize"], 7)
+
+    def test_callback_missing_path_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = self._upload_bot()
+            bot.callback = lambda message: Path(tmp) / "missing"
+            with self.assertRaises(FileNotFoundError):
+                handle(bot, event(RoomMessageText))
+            bot.client.room_send.assert_not_called()
 
     def test_ignores_own_messages(self):
         calls = []
