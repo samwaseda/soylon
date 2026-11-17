@@ -80,7 +80,7 @@ def run_workflow(message: Message):
         if not loaded_function:
             return "No workflow loaded. Use !load <workflow_name> to load a workflow first."
         try:
-            _, arg_name, arg_value = message.body.split(" ", 2)
+            arg_name, arg_value = message.body.split(" ", 1)[1].split("=", 1)
         except ValueError:
             return "Invalid command format. Use !set <arg_name>=<arg_value>."
         if arg_name not in all_functions[loaded_function["function"].__name__]["arguments"]:
