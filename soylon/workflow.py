@@ -53,16 +53,16 @@ def run_workflow(message: Message):
     global loaded_function
     if message.attachment:
         return f"Got {message.attachment.kind}: {message.attachment.path}"
-    if message.body == "!help":
+    elif message.body == "!help":
         return "Commands:\n!list - List available workflows\n!status - Show the currently loaded workflow\n!load <workflow_name> - Load a specific workflow"
-    if message.body == "!list":
+    elif message.body == "!list":
         return "Available workflows:\n" + "\n".join(f"- {name}" for name in all_functions)
-    if message.body == "!status":
+    elif message.body == "!status":
         if loaded_function:
             return f"Loaded workflow: {loaded_function['function'].__name__}\nInputs: {loaded_function['inputs']}"
         else:
             return "No workflow loaded."
-    if message.body.startswith("!load "):
+    elif message.body.startswith("!load "):
         function_name = message.body.split(" ", 1)[1]
         if function_name in all_functions:
             loaded_function = {"function": all_functions[function_name]["function"], "inputs": {}}
@@ -78,7 +78,7 @@ def run_workflow(message: Message):
             return f"Loaded workflow: {function_name}\n\n" + input_info
         else:
             return f"Workflow {function_name} not found."
-    if message.body.startswith("!set "):
+    elif message.body.startswith("!set "):
         if not loaded_function:
             return "No workflow loaded. Use !load <workflow_name> to load a workflow first."
         try:
@@ -96,7 +96,7 @@ def run_workflow(message: Message):
         else:
             converted_value = arg_value
         loaded_function["inputs"][arg_name] = converted_value
-    if message.body == "!run":
+    elif message.body == "!run":
         if not loaded_function:
             return "No workflow loaded. Use !load <workflow_name> to load a workflow first."
         try:
@@ -104,6 +104,8 @@ def run_workflow(message: Message):
             return f"Workflow {loaded_function['function'].__name__} executed successfully. Result: {result}"
         except Exception as e:
             return f"Error executing workflow: {e}"
+    elif message.body.startswith("!"):
+        return "Unknown command. Use !help for a list of commands."
 
 
 
