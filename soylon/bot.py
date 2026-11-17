@@ -12,7 +12,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 import aiohttp
 from dotenv import load_dotenv
@@ -108,7 +108,8 @@ class Figure(Protocol):
     def savefig(self, *args, **kwargs) -> None: ...
 
 
-Reply = str | Path | Figure | None
+Item = str | Path | Figure | None
+Reply = Item | dict[Any, Any] | tuple[Any, ...]
 Callback = Callable[[Message], Reply | Awaitable[Reply]]
 
 _KINDS = {"m.image": "image", "m.audio": "audio", "m.video": "video"}
@@ -120,7 +121,9 @@ class Bot:
     The callback receives each new text, image or file message from other
     users (media is first saved to disk under a per-sender folder, see
     `Attachment.path`) and may return text, a file or directory path, a figure
-    with a `savefig` method, or None (no reply). It can be a plain function or
+    with a `savefig` method, or None (no reply). For a dict or tuple, the
+    whole value is sent as text first, then each file path or figure inside
+    it is sent separately, preceded by a message naming its key or index. It can be a plain function or
     a coroutine function.
     """
 
@@ -246,6 +249,18 @@ class Bot:
         )
         if inspect.isawaitable(reply):
             reply = await reply
+        if isinstance(reply, (dict, tuple)):
+            await self.send(room.room_id, str(reply))
+            items = reply.items() if isinstance(reply, dict) else enumerate(reply)
+            for key, item in items:
+                if isinstance(item, Path) or callable(getattr(item, "savefig", None)):
+                    label = f"key {key!r}" if isinstance(reply, dict) else f"index {key}"
+                    await self.send(room.room_id, f"Sending {label}:")
+                    await self._send_reply(room.room_id, item)
+        else:
+            await self._send_reply(room.room_id, reply)
+
+    async def _send_reply(self, room_id: str, reply: Item) -> None:
         if isinstance(reply, Path):
             if reply.is_dir():
                 with tempfile.TemporaryDirectory() as tmp:
@@ -254,13 +269,13 @@ class Bot:
                         "zip",
                         root_dir=reply,
                     )
-                    await self.send_file(room.room_id, Path(archive))
+                    await self.send_file(room_id, Path(archive))
             else:
-                await self.send_file(room.room_id, reply)
+                await self.send_file(room_id, reply)
         elif callable(getattr(reply, "savefig", None)):
-            await self.send_figure(room.room_id, reply)
+            await self.send_figure(room_id, reply)
         elif reply:
-            await self.send(room.room_id, reply)
+            await self.send(room_id, reply)
 
     async def _reply_metadata(
         self, room_id: str, event_id: str
