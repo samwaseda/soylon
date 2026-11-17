@@ -160,7 +160,10 @@ class WorkflowBot:
             result = self.workflows[self.name]["function"](**self.inputs)
         except Exception as e:
             return f"Error executing workflow: {e}"
-        return f"Workflow {self.name} executed successfully. Result: {result}"
+        if result is None:
+            return f"Workflow {self.name} executed successfully but has no return value."
+        else:
+            return result
 
     def _ask(self, key: str) -> str:
         self.pending = key
