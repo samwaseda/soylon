@@ -11,11 +11,14 @@ from nio import (
     DownloadError,
     InviteMemberEvent,
     JoinResponse,
+    LoginResponse,
+    LogoutResponse,
     RoomEncryptedMedia,
     RoomGetEventError,
     RoomGetEventResponse,
     RoomMessageMedia,
     RoomMessageText,
+    SyncResponse,
     UploadResponse,
 )
 
@@ -341,6 +344,51 @@ class TestBot(unittest.TestCase):
             asyncio.run(bot._sync_with_reconnect())
         self.assertEqual(bot.client.sync_forever.await_count, 4)
         self.assertEqual([c.args[0] for c in sleep.await_args_list], [1.0, 2.0, 4.0])
+
+    def test_run_logs_out_on_cancellation(self):
+        bot = make_bot(lambda m: None)
+        bot.client.access_token = "token"
+        bot.client.login = AsyncMock(
+            return_value=LoginResponse("@bot:example.org", "DEVICE", "token")
+        )
+        bot.client.sync = AsyncMock(return_value=SyncResponse.__new__(SyncResponse))
+        bot._sync_with_reconnect = AsyncMock(side_effect=asyncio.CancelledError)
+        bot.client.logout = AsyncMock(return_value=LogoutResponse())
+        bot.client.close = AsyncMock()
+
+        with self.assertRaises(asyncio.CancelledError):
+            asyncio.run(bot.run())
+
+        bot.client.logout.assert_awaited_once_with()
+        bot.client.close.assert_awaited_once_with()
+
+    def test_run_closes_without_logout_on_login_failure(self):
+        bot = make_bot(lambda m: None)
+        bot.client.login = AsyncMock(return_value=SimpleNamespace())
+        bot.client.logout = AsyncMock()
+        bot.client.close = AsyncMock()
+
+        with self.assertRaisesRegex(RuntimeError, "Login failed"):
+            asyncio.run(bot.run())
+
+        bot.client.logout.assert_not_awaited()
+        bot.client.close.assert_awaited_once_with()
+
+    def test_run_closes_if_logout_raises(self):
+        bot = make_bot(lambda m: None)
+        bot.client.access_token = "token"
+        bot.client.login = AsyncMock(
+            return_value=LoginResponse("@bot:example.org", "DEVICE", "token")
+        )
+        bot.client.sync = AsyncMock(return_value=SyncResponse.__new__(SyncResponse))
+        bot._sync_with_reconnect = AsyncMock()
+        bot.client.logout = AsyncMock(side_effect=OSError("network error"))
+        bot.client.close = AsyncMock()
+
+        with self.assertRaisesRegex(OSError, "network error"):
+            asyncio.run(bot.run())
+
+        bot.client.close.assert_awaited_once_with()
 
     def test_invite_is_joined(self):
         bot = make_bot(lambda m: None)
