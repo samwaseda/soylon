@@ -51,7 +51,7 @@ class WorkflowBot:
         "!status - Show the currently loaded workflow\n"
         "!load <workflow_name> - Load a specific workflow\n"
         "!set <arg_name>=<arg_value> - Set an input\n"
-        "!run - Run the loaded workflow"
+        "!run [workflow_name] - Run the loaded (or the given) workflow"
     )
     NOT_LOADED = "No workflow loaded. Use !load <workflow_name> to load a workflow first."
 
@@ -105,14 +105,17 @@ class WorkflowBot:
             return "No workflow loaded."
         return f"Loaded workflow: {self.name}\nInputs: {self.inputs}"
 
-    def load(self, name: str) -> str:
-        if name not in self.workflows:
-            return f"Workflow {name} not found."
+    def _select(self, name: str) -> None:
         self.name = name
         self.pending = None
         self.inputs = {
             key: info["default"] for key, info in self._arguments.items() if "default" in info
         }
+
+    def load(self, name: str) -> str:
+        if name not in self.workflows:
+            return f"Workflow {name} not found."
+        self._select(name)
         return f"Loaded workflow: {name}\n\n" + self._describe_inputs()
 
     def _describe_inputs(self) -> str:
@@ -144,6 +147,10 @@ class WorkflowBot:
         return f"Set argument {key} to {value} for workflow {self.name}."
 
     def run(self, arg: str = "") -> str:
+        if arg:
+            if arg not in self.workflows:
+                return f"Workflow {arg} not found."
+            self._select(arg)
         if self.name is None:
             return self.NOT_LOADED
         missing = [key for key in self._arguments if key not in self.inputs]
