@@ -1,6 +1,6 @@
 import asyncio
 import inspect
-from typing import Annotated, get_args, get_origin, get_type_hints
+from typing import Any, Annotated, Callable, Dict, Optional, get_args, get_origin, get_type_hints
 
 from dotenv import load_dotenv
 
@@ -34,81 +34,118 @@ def get_function_arguments(func):
     return arguments
 
 
-all_functions = {}
-for name in dir(examples):
-    f = getattr(examples, name)
-    if hasattr(f, "flowrep_recipe"):
-        all_functions[name] = {"function": f, "arguments": get_function_arguments(f)}
+def collect_workflows(module) -> Dict[str, Dict[str, Any]]:
+    workflows = {}
+    for name in dir(module):
+        f = getattr(module, name)
+        if hasattr(f, "flowrep_recipe"):
+            workflows[name] = {"function": f, "arguments": get_function_arguments(f)}
+    return workflows
 
 
-welcome_message = "Hello! Here's the list of available workflows:\n" + "\n".join(
-    f"- {name}" for name in all_functions
-)
+class WorkflowBot:
+    """Chat command handler holding the state of the currently loaded workflow."""
 
+    HELP = (
+        "Commands:\n!list - List available workflows\n"
+        "!status - Show the currently loaded workflow\n"
+        "!load <workflow_name> - Load a specific workflow\n"
+        "!set <arg_name>=<arg_value> - Set an input\n"
+        "!run - Run the loaded workflow"
+    )
+    NOT_LOADED = "No workflow loaded. Use !load <workflow_name> to load a workflow first."
 
-loaded_function = None
+    def __init__(self, workflows: Dict[str, Dict[str, Any]]):
+        self.workflows = workflows
+        self.name: Optional[str] = None
+        self.inputs: Dict[str, Any] = {}
+        self._commands: Dict[str, Callable[[str], str]] = {
+            "!help": self.help,
+            "!list": self.list,
+            "!status": self.status,
+            "!load": self.load,
+            "!set": self.set,
+            "!run": self.run,
+        }
 
+    @property
+    def welcome_message(self) -> str:
+        return "Hello! Here's the list of available workflows:\n" + self._names()
 
-def run_workflow(message: Message):
-    global loaded_function
-    if message.attachment:
-        return f"Got {message.attachment.kind}: {message.attachment.path}"
-    elif message.body == "!help":
-        return "Commands:\n!list - List available workflows\n!status - Show the currently loaded workflow\n!load <workflow_name> - Load a specific workflow"
-    elif message.body == "!list":
-        return "Available workflows:\n" + "\n".join(f"- {name}" for name in all_functions)
-    elif message.body == "!status":
-        if loaded_function:
-            return f"Loaded workflow: {loaded_function['function'].__name__}\nInputs: {loaded_function['inputs']}"
-        else:
+    def _names(self) -> str:
+        return "\n".join(f"- {name}" for name in self.workflows)
+
+    @property
+    def _arguments(self) -> Dict[str, Dict[str, Any]]:
+        return self.workflows[self.name]["arguments"]
+
+    def __call__(self, message: Message) -> Optional[str]:
+        if message.attachment:
+            return f"Got {message.attachment.kind}: {message.attachment.path}"
+        if not message.body.startswith("!"):
+            return None
+        command, _, arg = message.body.partition(" ")
+        handler = self._commands.get(command)
+        if handler is None:
+            return "Unknown command. Use !help for a list of commands."
+        return handler(arg.strip())
+
+    def help(self, arg: str = "") -> str:
+        return self.HELP
+
+    def list(self, arg: str = "") -> str:
+        return "Available workflows:\n" + self._names()
+
+    def status(self, arg: str = "") -> str:
+        if self.name is None:
             return "No workflow loaded."
-    elif message.body.startswith("!load "):
-        function_name = message.body.split(" ", 1)[1]
-        if function_name in all_functions:
-            loaded_function = {"function": all_functions[function_name]["function"], "inputs": {}}
-            for inp in all_functions[function_name]["arguments"]:
-                if "default" in all_functions[function_name]["arguments"][inp]:
-                    loaded_function["inputs"][inp] = all_functions[function_name]["arguments"][inp]["default"]
-            input_info = "List of input:\n"
-            for arg_name, arg_info in all_functions[function_name]["arguments"].items():
-                input_info += f"- {arg_name}: {arg_info['type'].__name__}"
-                if "default" in arg_info:
-                    input_info += f" (default: {arg_info['default']})"
-                input_info += "\n"
-            return f"Loaded workflow: {function_name}\n\n" + input_info
-        else:
-            return f"Workflow {function_name} not found."
-    elif message.body.startswith("!set "):
-        if not loaded_function:
-            return "No workflow loaded. Use !load <workflow_name> to load a workflow first."
-        try:
-            arg_name, arg_value = message.body.split(" ", 1)[1].split("=", 1)
-        except ValueError:
+        return f"Loaded workflow: {self.name}\nInputs: {self.inputs}"
+
+    def load(self, name: str) -> str:
+        if name not in self.workflows:
+            return f"Workflow {name} not found."
+        self.name = name
+        self.inputs = {
+            key: info["default"] for key, info in self._arguments.items() if "default" in info
+        }
+        return f"Loaded workflow: {name}\n\n" + self._describe_inputs()
+
+    def _describe_inputs(self) -> str:
+        lines = ["List of input:"]
+        for key, info in self._arguments.items():
+            line = f"- {key}: {info['type'].__name__}"
+            if "default" in info:
+                line += f" (default: {info['default']})"
+            lines.append(line)
+        return "\n".join(lines) + "\n"
+
+    def set(self, arg: str) -> str:
+        if self.name is None:
+            return self.NOT_LOADED
+        key, sep, raw = arg.partition("=")
+        if not sep:
             return "Invalid command format. Use !set <arg_name>=<arg_value>."
-        if arg_name not in all_functions[loaded_function["function"].__name__]["arguments"]:
-            return f"Argument {arg_name} not found in workflow {loaded_function["function"].__name__}."
-        if "type" in all_functions[loaded_function["function"].__name__]["arguments"][arg_name]:
-            arg_type = all_functions[loaded_function["function"].__name__]["arguments"][arg_name]["type"]
-            try:
-                converted_value = convert_input(arg_type, arg_value)
-            except Exception as e:
-                return f"Error converting value: {e}"
-        else:
-            converted_value = arg_value
-        loaded_function["inputs"][arg_name] = converted_value
-        return f"Set argument {arg_name} to {converted_value} for workflow {loaded_function['function'].__name__}."
-    elif message.body == "!run":
-        if not loaded_function:
-            return "No workflow loaded. Use !load <workflow_name> to load a workflow first."
+        if key not in self._arguments:
+            return f"Argument {key} not found in workflow {self.name}."
         try:
-            result = loaded_function["function"](**loaded_function["inputs"])
-            return f"Workflow {loaded_function['function'].__name__} executed successfully. Result: {result}"
+            value = convert_input(self._arguments[key]["type"], raw) if "type" in self._arguments[key] else raw
+        except Exception as e:
+            return f"Error converting value: {e}"
+        self.inputs[key] = value
+        return f"Set argument {key} to {value} for workflow {self.name}."
+
+    def run(self, arg: str = "") -> str:
+        if self.name is None:
+            return self.NOT_LOADED
+        try:
+            result = self.workflows[self.name]["function"](**self.inputs)
         except Exception as e:
             return f"Error executing workflow: {e}"
-    elif message.body.startswith("!"):
-        return "Unknown command. Use !help for a list of commands."
-
+        return f"Workflow {self.name} executed successfully. Result: {result}"
 
 
 if __name__ == "__main__":
-    asyncio.run(Bot.from_env(run_workflow, welcome_message=welcome_message).run())
+    workflow_bot = WorkflowBot(collect_workflows(examples))
+    asyncio.run(
+        Bot.from_env(workflow_bot, welcome_message=workflow_bot.welcome_message).run()
+    )
