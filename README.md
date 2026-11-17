@@ -38,7 +38,9 @@ asyncio.run(Bot.from_env(respond, welcome_message="Hello!").run())
 ```
 
 The callback may be a plain function or a coroutine function. Return a string
-to reply in the same room, or `None` to stay silent. The bot ignores its own
+to reply in the same room, a `pathlib.Path` to send a file or a ZIP archive of
+a directory, a figure with a `savefig` method to send an image, or `None` to
+stay silent. A missing file path raises an error. The bot ignores its own
 messages and everything that happened before its first sync (history is
 skipped using the sync token, not the local clock), and joins every room it is
 invited to. The optional `welcome_message` argument (also available on `Bot`
@@ -77,6 +79,12 @@ await bot.send_figure(room_id, matplotlib_figure)      # any object with .savefi
 ```
 
 Uploads are encrypted automatically in encrypted rooms.
+
+Set `max_file_size` on `Bot` or `Bot.from_env` to limit uploads in bytes, for
+example `Bot.from_env(respond, max_file_size=10 * 1024 * 1024)`. The default
+`None` imposes no limit. The limit applies to files, rendered figures and ZIP
+archives, including callback replies; exceeding it raises `ValueError` before
+uploading. It does not limit incoming attachments.
 
 ### Converting user input
 

@@ -6,10 +6,13 @@ import logging
 import mimetypes
 import os
 import re
+import shutil
+import tempfile
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Protocol
 
 import aiohttp
 from dotenv import load_dotenv
@@ -73,6 +76,13 @@ def _unique_path(directory: Path, filename: str) -> Path:
     return path
 
 
+def _read_file(path: Path, max_file_size: int | None) -> bytes:
+    with path.open("rb") as file:
+        return (
+            file.read(max_file_size + 1) if max_file_size is not None else file.read()
+        )
+
+
 @dataclass(frozen=True)
 class ReplyMetadata:
     event_id: str
@@ -94,7 +104,11 @@ class Message:
     reply_to: ReplyMetadata | None = None
 
 
-Reply = str | None
+class Figure(Protocol):
+    def savefig(self, *args, **kwargs) -> None: ...
+
+
+Reply = str | Path | Figure | None
 Callback = Callable[[Message], Reply | Awaitable[Reply]]
 
 _KINDS = {"m.image": "image", "m.audio": "audio", "m.video": "video"}
@@ -105,8 +119,9 @@ class Bot:
 
     The callback receives each new text, image or file message from other
     users (media is first saved to disk under a per-sender folder, see
-    `Attachment.path`) and may return a string (sent back to the same room) or None (no
-    reply). It can be a plain function or a coroutine function.
+    `Attachment.path`) and may return text, a file or directory path, a figure
+    with a `savefig` method, or None (no reply). It can be a plain function or
+    a coroutine function.
     """
 
     def __init__(
@@ -117,9 +132,17 @@ class Bot:
         password: str,
         storage_dir: str | Path = "downloads",
         welcome_message: str | None = None,
+        max_file_size: int | None = None,
     ) -> None:
+        if max_file_size is not None and (
+            not isinstance(max_file_size, int)
+            or isinstance(max_file_size, bool)
+            or max_file_size < 0
+        ):
+            raise ValueError("max_file_size must be a non-negative integer or None")
         self.callback = callback
         self.welcome_message = welcome_message
+        self.max_file_size = max_file_size
         self.min_reconnect_delay = 1.0
         self.max_reconnect_delay = 60.0
         self.storage_dir = Path(storage_dir)
@@ -128,7 +151,12 @@ class Bot:
         self.client.add_event_callback(self._on_invite, InviteMemberEvent)
 
     @classmethod
-    def from_env(cls, callback: Callback, welcome_message: str | None = None) -> "Bot":
+    def from_env(
+        cls,
+        callback: Callback,
+        welcome_message: str | None = None,
+        max_file_size: int | None = None,
+    ) -> "Bot":
         load_dotenv()
         required = ("HOMESERVER", "USER_ID", "PASSWORD")
         missing = [name for name in required if name not in os.environ]
@@ -149,6 +177,7 @@ class Bot:
             os.environ["PASSWORD"],
             os.environ.get("STORAGE_DIR", "downloads"),
             welcome_message=welcome_message,
+            max_file_size=max_file_size,
         )
 
     async def _on_invite(self, room: MatrixRoom, event: InviteMemberEvent) -> None:
@@ -217,7 +246,20 @@ class Bot:
         )
         if inspect.isawaitable(reply):
             reply = await reply
-        if reply:
+        if isinstance(reply, Path):
+            if reply.is_dir():
+                with tempfile.TemporaryDirectory() as tmp:
+                    archive = shutil.make_archive(
+                        str(Path(tmp) / (reply.resolve().name or "directory")),
+                        "zip",
+                        root_dir=reply,
+                    )
+                    await self.send_file(room.room_id, Path(archive))
+            else:
+                await self.send_file(room.room_id, reply)
+        elif callable(getattr(reply, "savefig", None)):
+            await self.send_figure(room.room_id, reply)
+        elif reply:
             await self.send(room.room_id, reply)
 
     async def _reply_metadata(
@@ -278,10 +320,15 @@ class Bot:
         """Upload a file (path or bytes) and send it to a room.
 
         Images, audio and video are sent as such, anything else as a file.
+        Raises ValueError if the configured upload size limit is exceeded.
         """
         if isinstance(data, (str, Path)):
             filename = filename or Path(data).name
-            data = Path(data).read_bytes()
+            data = _read_file(Path(data), self.max_file_size)
+        if self.max_file_size is not None and len(data) > self.max_file_size:
+            raise ValueError(
+                f"File exceeds maximum upload size of {self.max_file_size} bytes"
+            )
         filename = filename or "file"
         mimetype = (
             mimetype or mimetypes.guess_type(filename)[0] or "application/octet-stream"
