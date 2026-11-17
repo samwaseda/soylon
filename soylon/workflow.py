@@ -96,6 +96,7 @@ def run_workflow(message: Message):
         else:
             converted_value = arg_value
         loaded_function["inputs"][arg_name] = converted_value
+        return f"Set argument {arg_name} to {converted_value} for workflow {loaded_function['function'].__name__}."
     elif message.body == "!run":
         if not loaded_function:
             return "No workflow loaded. Use !load <workflow_name> to load a workflow first."
