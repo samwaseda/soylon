@@ -412,6 +412,19 @@ class TestBot(unittest.TestCase):
             bot.client.room_send.await_args.kwargs["content"]["body"], "Hello!"
         )
 
+    def test_from_env_reports_missing_required_variables(self):
+        with (
+            patch("soylon.bot.load_dotenv"),
+            patch.dict("os.environ", {}, clear=True),
+            self.assertRaisesRegex(
+                ValueError,
+                r"(?s)Missing required environment variable\(s\): "
+                r"HOMESERVER, USER_ID, PASSWORD.*"
+                r"HOMESERVER=https://matrix.org",
+            ),
+        ):
+            Bot.from_env(lambda m: None)
+
 
 if __name__ == "__main__":
     unittest.main()

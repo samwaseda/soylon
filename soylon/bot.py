@@ -129,6 +129,18 @@ class Bot:
     @classmethod
     def from_env(cls, callback: Callback, welcome_message: str | None = None) -> "Bot":
         load_dotenv()
+        required = ("HOMESERVER", "USER_ID", "PASSWORD")
+        missing = [name for name in required if name not in os.environ]
+        if missing:
+            names = ", ".join(missing)
+            raise ValueError(
+                f"Missing required environment variable(s): {names}.\n"
+                "Configure them in your environment or copy .env.example to .env, "
+                "for example:\n"
+                "HOMESERVER=https://matrix.org\n"
+                "USER_ID=@my_workflow_bot:matrix.org\n"
+                "PASSWORD=my_password"
+            )
         return cls(
             callback,
             os.environ["HOMESERVER"],
