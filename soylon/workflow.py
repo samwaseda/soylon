@@ -59,6 +59,7 @@ class WorkflowBot:
         self.workflows = workflows
         self.name: Optional[str] = None
         self.inputs: Dict[str, Any] = {}
+        self.pending: Optional[str] = None
         self._commands: Dict[str, Callable[[str], str]] = {
             "!help": self.help,
             "!list": self.list,
@@ -82,8 +83,11 @@ class WorkflowBot:
     def __call__(self, message: Message) -> Optional[str]:
         if message.attachment:
             return f"Got {message.attachment.kind}: {message.attachment.path}"
+        if self.pending is not None and not message.body.startswith("!"):
+            return self.answer(message.body.strip())
         if not message.body.startswith("!"):
             return None
+        self.pending = None
         command, _, arg = message.body.partition(" ")
         handler = self._commands.get(command)
         if handler is None:
@@ -105,6 +109,7 @@ class WorkflowBot:
         if name not in self.workflows:
             return f"Workflow {name} not found."
         self.name = name
+        self.pending = None
         self.inputs = {
             key: info["default"] for key, info in self._arguments.items() if "default" in info
         }
@@ -119,6 +124,10 @@ class WorkflowBot:
             lines.append(line)
         return "\n".join(lines) + "\n"
 
+    def _convert(self, key: str, raw: str) -> Any:
+        info = self._arguments[key]
+        return convert_input(info["type"], raw) if "type" in info else raw
+
     def set(self, arg: str) -> str:
         if self.name is None:
             return self.NOT_LOADED
@@ -128,7 +137,7 @@ class WorkflowBot:
         if key not in self._arguments:
             return f"Argument {key} not found in workflow {self.name}."
         try:
-            value = convert_input(self._arguments[key]["type"], raw) if "type" in self._arguments[key] else raw
+            value = self._convert(key, raw)
         except Exception as e:
             return f"Error converting value: {e}"
         self.inputs[key] = value
@@ -137,11 +146,29 @@ class WorkflowBot:
     def run(self, arg: str = "") -> str:
         if self.name is None:
             return self.NOT_LOADED
+        missing = [key for key in self._arguments if key not in self.inputs]
+        if missing:
+            return self._ask(missing[0])
         try:
             result = self.workflows[self.name]["function"](**self.inputs)
         except Exception as e:
             return f"Error executing workflow: {e}"
         return f"Workflow {self.name} executed successfully. Result: {result}"
+
+    def _ask(self, key: str) -> str:
+        self.pending = key
+        info = self._arguments[key]
+        type_name = getattr(info.get("type"), "__name__", "any")
+        return f"Please provide a value for {key} ({type_name}):"
+
+    def answer(self, raw: str) -> str:
+        key = self.pending
+        try:
+            self.inputs[key] = self._convert(key, raw)
+        except Exception as e:
+            return f"Error converting value: {e}\n" + self._ask(key)
+        self.pending = None
+        return self.run()
 
 
 if __name__ == "__main__":
