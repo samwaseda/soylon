@@ -253,20 +253,29 @@ class Bot:
         )
         if inspect.isawaitable(reply):
             reply = await reply
-        if isinstance(reply, (dict, tuple)) and self.convert_files:
+        if isinstance(reply, (dict, tuple)):
             await self.send(room.room_id, str(reply))
-            items = reply.items() if isinstance(reply, dict) else enumerate(reply)
-            for key, item in items:
-                if isinstance(item, Path) or callable(getattr(item, "savefig", None)):
-                    label = f"key {key!r}" if isinstance(reply, dict) else f"index {key}"
-                    await self.send(room.room_id, f"Sending {label}:")
-                    await self._send_reply(room.room_id, item)
+            if self.convert_files:
+                items = reply.items() if isinstance(reply, dict) else enumerate(reply)
+                for key, item in items:
+                    if isinstance(item, Path) or callable(
+                        getattr(item, "savefig", None)
+                    ):
+                        label = (
+                            f"key {key!r}"
+                            if isinstance(reply, dict)
+                            else f"index {key}"
+                        )
+                        await self.send(room.room_id, f"Sending {label}:")
+                        await self._send_reply(room.room_id, item)
         else:
             await self._send_reply(room.room_id, reply)
 
     async def _send_reply(self, room_id: str, reply: Item) -> None:
-        if isinstance(reply, Path) and self.convert_files:
-            if reply.is_dir():
+        if isinstance(reply, Path):
+            if not self.convert_files:
+                await self.send(room_id, str(reply))
+            elif reply.is_dir():
                 with tempfile.TemporaryDirectory() as tmp:
                     archive = shutil.make_archive(
                         str(Path(tmp) / (reply.resolve().name or "directory")),
@@ -276,8 +285,11 @@ class Bot:
                     await self.send_file(room_id, Path(archive))
             else:
                 await self.send_file(room_id, reply)
-        elif callable(getattr(reply, "savefig", None)) and self.convert_files:
-            await self.send_figure(room_id, reply)
+        elif callable(getattr(reply, "savefig", None)):
+            if self.convert_files:
+                await self.send_figure(room_id, reply)
+            else:
+                await self.send(room_id, str(reply))
         elif reply:
             await self.send(room_id, reply)
 
