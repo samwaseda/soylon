@@ -81,9 +81,9 @@ class WorkflowBot:
         return self.workflows[self.name]["arguments"]
 
     def __call__(self, message: Message) -> Optional[str]:
-        if message.attachment:
-            return f"Got {message.attachment.kind}: {message.attachment.path}"
         if self.pending is not None and not message.body.startswith("!"):
+            if message.attachment:
+                return self.answer(message.attachment.path)
             return self.answer(message.body.strip())
         if not message.body.startswith("!"):
             return None
