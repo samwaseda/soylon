@@ -88,6 +88,7 @@ from soylon.helper import convert_input
 
 number = convert_input(int, "42")
 enabled = convert_input(bool, "yes")
+number_or_text = convert_input(int | str, "hello")
 ```
 
 Boolean input is case-insensitive and ignores surrounding whitespace. It accepts
@@ -95,6 +96,9 @@ Boolean input is case-insensitive and ignores surrounding whitespace. It accepts
 counterparts `0`, `false`, `f`, `no`, `n`, `off`, `disable` and `disabled`.
 Other boolean input raises `ValueError`. Other types receive the original string
 unchanged; their normal constructor behavior and errors apply.
+For a union, members are tried in order and the first successful conversion is
+returned. If none succeeds, `ValueError` is raised. A `None` member has no
+special string representation and does not convert string input.
 
 ## Logging
 
