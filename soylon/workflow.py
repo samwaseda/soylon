@@ -18,13 +18,15 @@ def get_function_arguments(func):
     arguments = {}
 
     for name, param in signature.parameters.items():
+        arguments[name] = {}
         dtype = hints.get(name, param.annotation)
 
         # Remove Annotated metadata
         if get_origin(dtype) is Annotated:
             dtype = get_args(dtype)[0]
 
-        arguments[name] = {"type": dtype}
+        if dtype is not inspect.Parameter.empty:
+            arguments[name] = {"type": dtype}
 
         if param.default is not inspect.Parameter.empty:
             arguments[name]["default"] = param.default
@@ -85,11 +87,14 @@ def run_workflow(message: Message):
             return "Invalid command format. Use !set <arg_name>=<arg_value>."
         if arg_name not in all_functions[loaded_function["function"].__name__]["arguments"]:
             return f"Argument {arg_name} not found in workflow {loaded_function["function"].__name__}."
-        arg_type = all_functions[loaded_function["function"].__name__]["arguments"][arg_name]["type"]
-        try:
-            converted_value = convert_input(arg_value, arg_type)
-        except Exception as e:
-            return f"Error converting value: {e}"
+        if "type" in all_functions[loaded_function["function"].__name__]["arguments"][arg_name]:
+            arg_type = all_functions[loaded_function["function"].__name__]["arguments"][arg_name]["type"]
+            try:
+                converted_value = convert_input(arg_type, arg_value)
+            except Exception as e:
+                return f"Error converting value: {e}"
+        else:
+            converted_value = arg_value
         loaded_function["inputs"][arg_name] = converted_value
     if message.body == "!run":
         if not loaded_function:
@@ -102,4 +107,5 @@ def run_workflow(message: Message):
 
 
 
-asyncio.run(Bot.from_env(run_workflow, welcome_message=welcome_message).run())
+if __name__ == "__main__":
+    asyncio.run(Bot.from_env(run_workflow, welcome_message=welcome_message).run())
