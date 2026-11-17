@@ -1,7 +1,9 @@
 import asyncio
 import datetime
+import io
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -78,6 +80,83 @@ class TestBot(unittest.TestCase):
         bot = make_bot(cb)
         handle(bot, event(RoomMessageText))
         bot.client.room_send.assert_not_called()
+
+    def test_callback_file_path_is_uploaded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "cat.png"
+            path.write_bytes(b"image")
+
+            async def cb(message):
+                return path
+
+            bot = self._upload_bot()
+            bot.callback = cb
+            handle(bot, event(RoomMessageText))
+        content = bot.client.room_send.call_args.kwargs["content"]
+        self.assertEqual((content["msgtype"], content["body"]), ("m.image", "cat.png"))
+        self.assertEqual(bot.client.upload.call_args.kwargs["filesize"], 5)
+
+    def test_callback_directory_is_uploaded_as_zip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp) / "report"
+            (directory / "empty").mkdir(parents=True)
+            (directory / "notes.txt").write_text("hello")
+            bot = self._upload_bot()
+            bot.callback = lambda message: directory
+            captured = {}
+
+            async def upload(provider, **kwargs):
+                captured["archive"] = provider().read()
+                captured["filename"] = kwargs["filename"]
+                return UploadResponse("mxc://x/up"), None
+
+            bot.client.upload.side_effect = upload
+            handle(bot, event(RoomMessageText))
+
+        self.assertEqual(captured["filename"], "report.zip")
+        with zipfile.ZipFile(io.BytesIO(captured["archive"])) as archive:
+            self.assertEqual(archive.read("notes.txt"), b"hello")
+            self.assertIn("empty/", archive.namelist())
+        content = bot.client.room_send.call_args.kwargs["content"]
+        self.assertEqual(
+            (content["msgtype"], content["body"]), ("m.file", "report.zip")
+        )
+
+    def test_callback_figure_is_rendered(self):
+        figure = SimpleNamespace(savefig=lambda buf, format: buf.write(b"PNGDATA"))
+        bot = self._upload_bot()
+        bot.callback = lambda message: figure
+        handle(bot, event(RoomMessageText))
+        content = bot.client.room_send.call_args.kwargs["content"]
+        self.assertEqual(
+            (content["msgtype"], content["body"]), ("m.image", "figure.png")
+        )
+        self.assertEqual(bot.client.upload.call_args.kwargs["filesize"], 7)
+
+    def test_callback_missing_path_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bot = self._upload_bot()
+            bot.callback = lambda message: Path(tmp) / "missing"
+            with self.assertRaises(FileNotFoundError):
+                handle(bot, event(RoomMessageText))
+            bot.client.room_send.assert_not_called()
+
+    def test_callback_uploads_respect_size_limit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "file.txt"
+            path.write_bytes(b"hello")
+            directory = Path(tmp) / "directory"
+            directory.mkdir()
+            figure = SimpleNamespace(savefig=lambda buf, format: buf.write(b"PNGDATA"))
+            for reply in (path, directory, figure):
+                with self.subTest(reply=reply):
+                    bot = self._upload_bot()
+                    bot.max_file_size = 1
+                    bot.callback = lambda message, reply=reply: reply
+                    with self.assertRaisesRegex(ValueError, "maximum upload size"):
+                        handle(bot, event(RoomMessageText))
+                    bot.client.upload.assert_not_called()
+                    bot.client.room_send.assert_not_called()
 
     def test_ignores_own_messages(self):
         calls = []
@@ -311,6 +390,33 @@ class TestBot(unittest.TestCase):
         content = bot.client.room_send.call_args.kwargs["content"]
         self.assertEqual((content["msgtype"], content["body"]), ("m.file", "notes.txt"))
 
+    def test_send_file_size_limit_boundary(self):
+        bot = self._upload_bot()
+        bot.max_file_size = 3
+        asyncio.run(bot.send_file(ROOM.room_id, b"abc", "a.bin"))
+        with self.assertRaisesRegex(ValueError, "3 bytes"):
+            asyncio.run(bot.send_file(ROOM.room_id, b"abcd", "a.bin"))
+        self.assertEqual(bot.client.upload.await_count, 1)
+        bot.max_file_size = 0
+        asyncio.run(bot.send_file(ROOM.room_id, b"", "empty.bin"))
+        with self.assertRaises(ValueError):
+            asyncio.run(bot.send_file(ROOM.room_id, b"a", "a.bin"))
+        self.assertEqual(bot.client.upload.await_count, 2)
+
+    def test_invalid_max_file_size(self):
+        for limit in (-1, 1.5, True):
+            with (
+                self.subTest(limit=limit),
+                self.assertRaisesRegex(ValueError, "max_file_size"),
+            ):
+                Bot(
+                    lambda m: None,
+                    "https://example.org",
+                    "@bot:example.org",
+                    "pw",
+                    max_file_size=limit,
+                )
+
     def test_send_file_encrypted_room(self):
         bot = self._upload_bot(encrypted=True, keys={"k": "key"})
         asyncio.run(bot.send_file(ROOM.room_id, b"abc", "a.bin"))
@@ -449,7 +555,10 @@ class TestBot(unittest.TestCase):
             "PASSWORD": "pw",
         }
         with patch("soylon.bot.load_dotenv"), patch.dict("os.environ", env):
-            bot = Bot.from_env(lambda m: None, welcome_message="Hello!")
+            bot = Bot.from_env(
+                lambda m: None, welcome_message="Hello!", max_file_size=10
+            )
+        self.assertEqual(bot.max_file_size, 10)
         bot.client.join = AsyncMock(return_value=JoinResponse(ROOM.room_id))
         bot.client.room_send = AsyncMock()
         invite = event(
