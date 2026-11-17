@@ -6,7 +6,7 @@ import unittest
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, call, patch
 
 import aiohttp
 from nio import (
@@ -132,6 +132,179 @@ class TestBot(unittest.TestCase):
             (content["msgtype"], content["body"]), ("m.image", "figure.png")
         )
         self.assertEqual(bot.client.upload.call_args.kwargs["filesize"], 7)
+
+    def test_callback_path_and_figure_are_text_when_conversion_is_disabled(self):
+        path = Path("cat.png")
+        figure = SimpleNamespace(savefig=lambda buf, format: buf.write(b"PNGDATA"))
+        for reply in (path, figure):
+            with self.subTest(reply=reply):
+                bot = make_bot(lambda message: reply)
+                bot.convert_files = False
+                handle(bot, event(RoomMessageText))
+                self.assertEqual(
+                    bot.client.room_send.call_args.kwargs["content"],
+                    {"msgtype": "m.text", "body": str(reply)},
+                )
+
+    def test_callback_composites_are_text_when_conversion_is_disabled(self):
+        for reply in ({"file": Path("notes.txt")}, (), {}):
+            with self.subTest(reply=reply):
+                bot = make_bot(lambda message: reply)
+                bot.convert_files = False
+                handle(bot, event(RoomMessageText))
+                self.assertEqual(
+                    bot.client.room_send.call_args.kwargs["content"],
+                    {"msgtype": "m.text", "body": str(reply)},
+                )
+                self.assertEqual(bot.client.room_send.await_count, 1)
+
+    def test_callback_empty_text_is_silent_when_conversion_is_disabled(self):
+        for reply in (None, ""):
+            with self.subTest(reply=reply):
+                bot = make_bot(lambda message: reply)
+                bot.convert_files = False
+                handle(bot, event(RoomMessageText))
+                bot.client.room_send.assert_not_awaited()
+
+    def test_callback_dict_sends_composite_and_attachments_in_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "notes.txt"
+            path.write_text("hello")
+            figure = SimpleNamespace(
+                savefig=lambda buf, format: buf.write(b"PNGDATA")
+            )
+            reply = {"text": "hello", "file": path, "figure": figure}
+            bot = self._upload_bot()
+            bot.callback = lambda message: reply
+
+            handle(bot, event(RoomMessageText))
+
+        self.assertEqual(
+            bot.client.room_send.await_args_list,
+            [
+                call(
+                    room_id=ROOM.room_id,
+                    message_type="m.room.message",
+                    content={"msgtype": "m.text", "body": str(reply)},
+                ),
+                call(
+                    room_id=ROOM.room_id,
+                    message_type="m.room.message",
+                    content={"msgtype": "m.text", "body": "Sending key 'file':"},
+                ),
+                call(
+                    room_id=ROOM.room_id,
+                    message_type="m.room.message",
+                    content={
+                        "msgtype": "m.file",
+                        "body": "notes.txt",
+                        "info": {"mimetype": "text/plain", "size": 5},
+                        "url": "mxc://x/up",
+                    },
+                ),
+                call(
+                    room_id=ROOM.room_id,
+                    message_type="m.room.message",
+                    content={"msgtype": "m.text", "body": "Sending key 'figure':"},
+                ),
+                call(
+                    room_id=ROOM.room_id,
+                    message_type="m.room.message",
+                    content={
+                        "msgtype": "m.image",
+                        "body": "figure.png",
+                        "info": {"mimetype": "image/png", "size": 7},
+                        "url": "mxc://x/up",
+                    },
+                ),
+            ],
+        )
+
+    def test_callback_tuple_sends_composite_and_attachments_in_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "notes.txt"
+            path.write_text("hello")
+            figure = SimpleNamespace(
+                savefig=lambda buf, format: buf.write(b"PNGDATA")
+            )
+            reply = ("hello", path, "world", figure)
+            bot = self._upload_bot()
+            bot.callback = lambda message: reply
+
+            handle(bot, event(RoomMessageText))
+
+        self.assertEqual(
+            bot.client.room_send.await_args_list,
+            [
+                call(
+                    room_id=ROOM.room_id,
+                    message_type="m.room.message",
+                    content={"msgtype": "m.text", "body": str(reply)},
+                ),
+                call(
+                    room_id=ROOM.room_id,
+                    message_type="m.room.message",
+                    content={"msgtype": "m.text", "body": "Sending index 1:"},
+                ),
+                call(
+                    room_id=ROOM.room_id,
+                    message_type="m.room.message",
+                    content={
+                        "msgtype": "m.file",
+                        "body": "notes.txt",
+                        "info": {"mimetype": "text/plain", "size": 5},
+                        "url": "mxc://x/up",
+                    },
+                ),
+                call(
+                    room_id=ROOM.room_id,
+                    message_type="m.room.message",
+                    content={"msgtype": "m.text", "body": "Sending index 3:"},
+                ),
+                call(
+                    room_id=ROOM.room_id,
+                    message_type="m.room.message",
+                    content={
+                        "msgtype": "m.image",
+                        "body": "figure.png",
+                        "info": {"mimetype": "image/png", "size": 7},
+                        "url": "mxc://x/up",
+                    },
+                ),
+            ],
+        )
+
+    def test_callback_container_stops_after_upload_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "notes.txt"
+            path.write_text("hello")
+            figure = SimpleNamespace(
+                savefig=lambda buf, format: buf.write(b"PNGDATA")
+            )
+            reply = ("hello", path, figure)
+            bot = self._upload_bot()
+            bot.callback = lambda message: reply
+            bot.client.upload.return_value = (SimpleNamespace(), None)
+
+            with self.assertRaisesRegex(RuntimeError, "Upload failed"):
+                handle(bot, event(RoomMessageText))
+
+        self.assertEqual(
+            bot.client.room_send.await_args_list,
+            [
+                call(
+                    room_id=ROOM.room_id,
+                    message_type="m.room.message",
+                    content={"msgtype": "m.text", "body": str(reply)},
+                ),
+                call(
+                    room_id=ROOM.room_id,
+                    message_type="m.room.message",
+                    content={"msgtype": "m.text", "body": "Sending index 1:"},
+                ),
+            ],
+        )
+        bot.client.upload.assert_awaited_once()
 
     def test_callback_missing_path_raises(self):
         with tempfile.TemporaryDirectory() as tmp:
