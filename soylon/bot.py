@@ -136,6 +136,7 @@ class Bot:
         storage_dir: str | Path = "downloads",
         welcome_message: str | None = None,
         max_file_size: int | None = None,
+        convert_files: bool = True,
     ) -> None:
         if max_file_size is not None and (
             not isinstance(max_file_size, int)
@@ -150,6 +151,7 @@ class Bot:
         self.max_reconnect_delay = 60.0
         self.storage_dir = Path(storage_dir)
         self.password = password
+        self.convert_files = convert_files
         self.client = AsyncClient(homeserver, user_id)
         self.client.add_event_callback(self._on_invite, InviteMemberEvent)
 
@@ -159,6 +161,7 @@ class Bot:
         callback: Callback,
         welcome_message: str | None = None,
         max_file_size: int | None = None,
+        convert_files: bool = True,
     ) -> "Bot":
         load_dotenv()
         required = ("HOMESERVER", "USER_ID", "PASSWORD")
@@ -181,6 +184,7 @@ class Bot:
             os.environ.get("STORAGE_DIR", "downloads"),
             welcome_message=welcome_message,
             max_file_size=max_file_size,
+            convert_files=convert_files
         )
 
     async def _on_invite(self, room: MatrixRoom, event: InviteMemberEvent) -> None:
@@ -249,7 +253,7 @@ class Bot:
         )
         if inspect.isawaitable(reply):
             reply = await reply
-        if isinstance(reply, (dict, tuple)):
+        if isinstance(reply, (dict, tuple)) and self.convert_files:
             await self.send(room.room_id, str(reply))
             items = reply.items() if isinstance(reply, dict) else enumerate(reply)
             for key, item in items:
@@ -261,7 +265,7 @@ class Bot:
             await self._send_reply(room.room_id, reply)
 
     async def _send_reply(self, room_id: str, reply: Item) -> None:
-        if isinstance(reply, Path):
+        if isinstance(reply, Path) and self.convert_files:
             if reply.is_dir():
                 with tempfile.TemporaryDirectory() as tmp:
                     archive = shutil.make_archive(
@@ -272,7 +276,7 @@ class Bot:
                     await self.send_file(room_id, Path(archive))
             else:
                 await self.send_file(room_id, reply)
-        elif callable(getattr(reply, "savefig", None)):
+        elif callable(getattr(reply, "savefig", None)) and self.convert_files:
             await self.send_figure(room_id, reply)
         elif reply:
             await self.send(room_id, reply)
