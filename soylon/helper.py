@@ -1,5 +1,5 @@
 from types import UnionType
-from typing import TypeVar, Union, cast, get_args, get_origin
+from typing import Any, TypeVar, Union, cast, get_args, get_origin, overload
 
 T = TypeVar("T")
 
@@ -7,7 +7,15 @@ _TRUE_VALUES = frozenset({"1", "true", "t", "yes", "y", "on", "enable", "enabled
 _FALSE_VALUES = frozenset({"0", "false", "f", "no", "n", "off", "disable", "disabled"})
 
 
-def convert_input(target_type: type[T], value: str) -> T:
+@overload
+def convert_input(target_type: type[T], value: str) -> T: ...
+
+
+@overload
+def convert_input(target_type: UnionType, value: str) -> Any: ...
+
+
+def convert_input(target_type: type[T] | UnionType, value: str) -> T:
     """Convert user input using a type's constructor or the first matching union member.
 
     Boolean values are case-insensitive and ignore surrounding whitespace.
