@@ -285,7 +285,7 @@ class Bot:
                 await self.send_file(room_id, reply)
         elif callable(getattr(reply, "savefig", None)) and self.convert_files:
             await self.send_figure(room_id, reply)
-        elif reply is not None and reply != "":
+        elif reply is not None and str(reply) != "":
             await self.send(room_id, str(reply))
 
     async def _reply_metadata(
