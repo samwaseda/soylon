@@ -1,6 +1,15 @@
 import asyncio
 import inspect
-from typing import Any, Annotated, Callable, Dict, Optional, get_args, get_origin, get_type_hints
+from typing import (
+    Any,
+    Annotated,
+    Callable,
+    Dict,
+    Optional,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
 from dotenv import load_dotenv
 
@@ -53,7 +62,9 @@ class WorkflowBot:
         "!set <arg_name>=<arg_value> - Set an input\n"
         "!run [workflow_name] - Run the loaded (or the given) workflow"
     )
-    NOT_LOADED = "No workflow loaded. Use !load <workflow_name> to load a workflow first."
+    NOT_LOADED = (
+        "No workflow loaded. Use !load <workflow_name> to load a workflow first."
+    )
 
     def __init__(self, workflows: Dict[str, Dict[str, Any]]):
         self.workflows = workflows
@@ -109,7 +120,9 @@ class WorkflowBot:
         self.name = name
         self.pending = None
         self.inputs = {
-            key: info["default"] for key, info in self._arguments.items() if "default" in info
+            key: info["default"]
+            for key, info in self._arguments.items()
+            if "default" in info
         }
 
     def load(self, name: str) -> str:
@@ -161,7 +174,9 @@ class WorkflowBot:
         except Exception as e:
             return f"Error executing workflow: {e}"
         if result is None:
-            return f"Workflow {self.name} executed successfully but has no return value."
+            return (
+                f"Workflow {self.name} executed successfully but has no return value."
+            )
         else:
             return result
 

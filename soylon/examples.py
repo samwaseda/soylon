@@ -19,21 +19,46 @@ def kinetic_energy_workflow(distance: float, time: float, mass: float) -> float:
 
 
 def plot(file_path: Path):
+    import numpy as np
     import matplotlib.pylab as plt
 
-    plt.figure(figsize=(10, 6))
-    plt.title("Kinetic Energy vs Distance")
-    plt.xlabel("Distance (m)")
-    plt.ylabel("Kinetic Energy (J)")
     plt.grid()
-    with open(file_path, "r") as f:
-        for line in f:
-            distance, kinetic_energy = map(float, line.strip().split(","))
-            plt.scatter(distance, kinetic_energy, color="blue")
+    x, y = np.loadtxt(file_path)
+    plt.plot(x, y)
     return plt
 
 
 @fr.workflow
-def kinetic_energy_plot_workflow(file_path: Path):
+def plot_workflow(file_path: Path):
     plt = plot(file_path)
     return plt
+
+
+def analyze_particles(image_path: Path) -> dict:
+    import numpy as np
+    from skimage import io, color, filters, measure
+
+    image = io.imread(image_path)
+
+    if image.ndim == 3:
+        image = color.rgb2gray(image)
+
+    threshold = filters.threshold_otsu(image)
+    binary = image > threshold
+
+    labels = measure.label(binary)
+    regions = measure.regionprops(labels)
+
+    diameters = np.array([r.equivalent_diameter_area for r in regions if r.area >= 20])
+
+    return {
+        "particle_count": len(diameters),
+        "mean_diameter_px": (float(np.mean(diameters)) if diameters else None),
+        "diameters_px": diameters,
+    }
+
+
+@fr.workflow
+def analyze_particles_workflow(image_path: Path) -> dict:
+    results = analyze_particles(image_path)
+    return results

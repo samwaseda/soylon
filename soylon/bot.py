@@ -184,7 +184,7 @@ class Bot:
             os.environ.get("STORAGE_DIR", "downloads"),
             welcome_message=welcome_message,
             max_file_size=max_file_size,
-            convert_files=convert_files
+            convert_files=convert_files,
         )
 
     async def _on_invite(self, room: MatrixRoom, event: InviteMemberEvent) -> None:
