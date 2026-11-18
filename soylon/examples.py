@@ -50,12 +50,11 @@ def analyze_particles(image_path: Path) -> dict:
     labels = measure.label(binary)
     regions = measure.regionprops(labels)
 
-    diameters = np.array([r.equivalent_diameter_area for r in regions if r.area >= 20])
+    diameters = [r.equivalent_diameter_area for r in regions if r.area >= 20]
 
     return {
         "particle_count": len(diameters),
         "mean_diameter_px": (float(np.mean(diameters)) if diameters else None),
-        "diameters_px": diameters,
     }
 
 
