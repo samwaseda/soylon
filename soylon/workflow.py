@@ -1,11 +1,9 @@
 import asyncio
 import inspect
+from collections.abc import Callable
 from typing import (
-    Any,
     Annotated,
-    Callable,
-    Dict,
-    Optional,
+    Any,
     get_args,
     get_origin,
     get_type_hints,
@@ -14,8 +12,8 @@ from typing import (
 from dotenv import load_dotenv
 
 from soylon import examples
-from soylon.helper import convert_input
 from soylon.bot import Bot, Message
+from soylon.helper import convert_input
 
 load_dotenv()
 
@@ -43,7 +41,7 @@ def get_function_arguments(func):
     return arguments
 
 
-def collect_workflows(module) -> Dict[str, Dict[str, Any]]:
+def collect_workflows(module) -> dict[str, dict[str, Any]]:
     workflows = {}
     for name in dir(module):
         f = getattr(module, name)
@@ -66,12 +64,12 @@ class WorkflowBot:
         "No workflow loaded. Use !load <workflow_name> to load a workflow first."
     )
 
-    def __init__(self, workflows: Dict[str, Dict[str, Any]]):
+    def __init__(self, workflows: dict[str, dict[str, Any]]):
         self.workflows = workflows
-        self.name: Optional[str] = None
-        self.inputs: Dict[str, Any] = {}
-        self.pending: Optional[str] = None
-        self._commands: Dict[str, Callable[[str], str]] = {
+        self.name: str | None = None
+        self.inputs: dict[str, Any] = {}
+        self.pending: str | None = None
+        self._commands: dict[str, Callable[[str], str]] = {
             "!help": self.help,
             "!list": self.list,
             "!status": self.status,
@@ -88,10 +86,10 @@ class WorkflowBot:
         return "\n".join(f"- {name}" for name in self.workflows)
 
     @property
-    def _arguments(self) -> Dict[str, Dict[str, Any]]:
+    def _arguments(self) -> dict[str, dict[str, Any]]:
         return self.workflows[self.name]["arguments"]
 
-    def __call__(self, message: Message) -> Optional[str]:
+    def __call__(self, message: Message) -> str | None:
         if self.pending is not None and not message.body.startswith("!"):
             if message.attachment:
                 return self.answer(message.attachment.path)

@@ -1,5 +1,6 @@
-import flowrep as fr
 from pathlib import Path
+
+import flowrep as fr
 
 
 def get_speed(distance: float, time: float) -> float:
@@ -19,8 +20,8 @@ def kinetic_energy_workflow(distance: float, time: float, mass: float) -> float:
 
 
 def plot(file_path: Path):
-    import numpy as np
     import matplotlib.pylab as plt
+    import numpy as np
 
     plt.grid()
     x, y = np.loadtxt(file_path)
@@ -36,7 +37,7 @@ def plot_workflow(file_path: Path):
 
 def analyze_particles(image_path: Path) -> dict:
     import numpy as np
-    from skimage import io, color, filters, measure
+    from skimage import color, filters, io, measure
 
     image = io.imread(image_path)
 
