@@ -50,7 +50,7 @@ def collect_workflows(module) -> dict[str, dict[str, Any]]:
     return workflows
 
 
-class WorkflowBot:
+class _WorkflowSession:
     """Chat command handler holding the state of the currently loaded workflow."""
 
     HELP = (
@@ -192,6 +192,23 @@ class WorkflowBot:
             return f"Error converting value: {e}\n" + self._ask(key)
         self.pending = None
         return self.run()
+
+
+class WorkflowBot(_WorkflowSession):
+    """Chat command handler with a separate workflow state for each conversation."""
+
+    def __init__(self, workflows: dict[str, dict[str, Any]]):
+        super().__init__(workflows)
+        self._sessions: dict[tuple[str, str, str | None], _WorkflowSession] = {}
+
+    def __call__(self, message: Message) -> str | None:
+        identity = (message.room_id, message.sender, message.thread_id)
+        session = self._sessions.get(identity)
+        if session is None:
+            if not message.body.startswith("!"):
+                return None
+            session = self._sessions[identity] = _WorkflowSession(self.workflows)
+        return session(message)
 
 
 if __name__ == "__main__":
