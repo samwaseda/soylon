@@ -19,6 +19,7 @@ Copy `.env.example` to `.env` and fill in:
 | `HOMESERVER`  | Homeserver URL, e.g. `https://matrix.org`            |
 | `USER_ID`     | The bot's Matrix ID, e.g. `@my_bot:matrix.org`       |
 | `PASSWORD`    | The bot's password                                   |
+| `ALLOWED_USERS` | Optional. Comma-separated full Matrix IDs allowed to invite and message the bot |
 | `STORAGE_DIR` | Optional. Where received files go (default `downloads`) |
 | `LOG_LEVEL`   | Optional. Used by `main()` (default `INFO`)          |
 
@@ -42,8 +43,15 @@ to reply in the same room, a `pathlib.Path` to send a file or a ZIP archive of
 a directory, a figure with a `savefig` method to send an image, or `None` to
 stay silent. A missing file path raises an error. The bot ignores its own
 messages and everything that happened before its first sync (history is
-skipped using the sync token, not the local clock), and joins every room it is
-invited to. The optional `welcome_message` argument (also available on `Bot`
+skipped using the sync token, not the local clock). By default it accepts
+messages and joins rooms invited by any user. Set `ALLOWED_USERS` to restrict
+both to the listed Matrix IDs; an empty value denies everyone. When constructing
+`Bot` directly, pass `allowed_users` as a set of full Matrix IDs: `None` allows
+everyone and an empty set denies everyone. Unauthorized messages are ignored
+before attachments are downloaded or the callback is called. Replies are
+visible to all members of the room, not just authorized users.
+
+The optional `welcome_message` argument (also available on `Bot`
 directly) is sent after a successful join; by default no message is sent.
 
 ### `Message`
