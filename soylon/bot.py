@@ -137,6 +137,7 @@ class Bot:
         welcome_message: str | None = None,
         max_file_size: int | None = None,
         convert_files: bool = True,
+        allowed_users: set[str] | None = None,
     ) -> None:
         if max_file_size is not None and (
             not isinstance(max_file_size, int)
@@ -152,6 +153,7 @@ class Bot:
         self.storage_dir = Path(storage_dir)
         self.password = password
         self.convert_files = convert_files
+        self.allowed_users = None if allowed_users is None else set(allowed_users)
         self.client = AsyncClient(homeserver, user_id)
         self.client.add_event_callback(self._on_invite, InviteMemberEvent)
 
@@ -176,6 +178,7 @@ class Bot:
                 "USER_ID=@my_workflow_bot:matrix.org\n"
                 "PASSWORD=my_password"
             )
+        allowed_users = os.environ.get("ALLOWED_USERS")
         return cls(
             callback,
             os.environ["HOMESERVER"],
@@ -185,10 +188,18 @@ class Bot:
             welcome_message=welcome_message,
             max_file_size=max_file_size,
             convert_files=convert_files,
+            allowed_users=(
+                {user.strip() for user in allowed_users.split(",") if user.strip()}
+                if allowed_users is not None
+                else None
+            ),
         )
 
     async def _on_invite(self, room: MatrixRoom, event: InviteMemberEvent) -> None:
         if event.state_key != self.client.user_id or event.membership != "invite":
+            return
+        if self.allowed_users is not None and event.sender not in self.allowed_users:
+            logger.warning("Ignoring invite from unauthorized sender %s", event.sender)
             return
         logger.info("Invited to %s, joining", room.room_id)
         response = await self.client.join(room.room_id)
@@ -199,6 +210,9 @@ class Bot:
 
     async def _on_message(self, room: MatrixRoom, event) -> None:
         if event.sender == self.client.user_id:
+            return
+        if self.allowed_users is not None and event.sender not in self.allowed_users:
+            logger.warning("Ignoring message from unauthorized sender %s", event.sender)
             return
         sent_at = datetime.datetime.fromtimestamp(event.server_timestamp / 1000)
         logger.info(f"Message '{event.body}' from {event.sender} in {room.room_id}")
@@ -285,7 +299,7 @@ class Bot:
                 await self.send_file(room_id, reply)
         elif callable(getattr(reply, "savefig", None)) and self.convert_files:
             await self.send_figure(room_id, reply)
-        elif reply:
+        elif reply is not None and str(reply) != "":
             await self.send(room_id, str(reply))
 
     async def _reply_metadata(
