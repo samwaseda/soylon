@@ -54,7 +54,7 @@ def analyze_particles(image_path: Path) -> dict:
 
     return {
         "particle_count": len(diameters),
-        "mean_diameter_px": (float(np.mean(diameters)) if diameters else None),
+        "mean_diameter_px": (float(np.mean(diameters)) if diameters.size > 0 else None),
         "diameters_px": diameters,
     }
 
