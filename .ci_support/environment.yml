@@ -2,8 +2,12 @@ channels:
   - conda-forge
 dependencies:
   - python =3.12
+  - flowrep
+  - matplotlib
   - matrix-nio
+  - numpy
   - python-dotenv
+  - scikit-image
   - pip:
       - aiohttp-socks >=0.10
       - python-socks >=2.7
