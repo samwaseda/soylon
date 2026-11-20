@@ -133,7 +133,11 @@ class _WorkflowSession:
     def _describe_inputs(self) -> str:
         lines = ["List of input:"]
         for key, info in self._arguments.items():
-            line = f"- {key}: {info['type'].__name__}"
+            dtype = info.get("type")
+            type_name = getattr(
+                dtype, "__name__", str(dtype) if dtype is not None else "any"
+            )
+            line = f"- {key}: {type_name}"
             if "default" in info:
                 line += f" (default: {info['default']})"
             lines.append(line)
