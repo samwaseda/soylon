@@ -92,6 +92,12 @@ class ReplyMetadata:
 
 
 @dataclass(frozen=True)
+class FormattedText:
+    body: str
+    formatted_body: str
+
+
+@dataclass(frozen=True)
 class Message:
     room_id: str
     sender: str
@@ -108,9 +114,19 @@ class Figure(Protocol):
     def savefig(self, *args, **kwargs) -> None: ...
 
 
-Item = str | Path | Figure | None
+Item = str | Path | Figure | FormattedText | None
 Reply = Item | dict[Any, Any] | tuple[Any, ...]
-Callback = Callable[[Message], Reply | Awaitable[Reply]]
+
+
+class BackgroundReply:
+    def __init__(self, reply: Callable[[], Awaitable[Reply]]):
+        self.reply = reply
+
+
+Callback = Callable[
+    [Message], Reply | BackgroundReply | Awaitable[Reply | BackgroundReply]
+]
+
 
 _KINDS = {"m.image": "image", "m.audio": "audio", "m.video": "video"}
 
@@ -154,6 +170,7 @@ class Bot:
         self.password = password
         self.convert_files = convert_files
         self.allowed_users = None if allowed_users is None else set(allowed_users)
+        self._reply_tasks: set[asyncio.Task] = set()
         self.client = AsyncClient(homeserver, user_id)
         self.client.add_event_callback(self._on_invite, InviteMemberEvent)
 
@@ -267,8 +284,24 @@ class Bot:
         )
         if inspect.isawaitable(reply):
             reply = await reply
+        if isinstance(reply, BackgroundReply):
+            task = asyncio.create_task(self._send_background_reply(room.room_id, reply))
+            self._reply_tasks.add(task)
+            task.add_done_callback(self._reply_tasks.discard)
+            return
+        await self._send_callback_reply(room.room_id, reply)
+
+    async def _send_background_reply(
+        self, room_id: str, reply: BackgroundReply
+    ) -> None:
+        try:
+            await self._send_callback_reply(room_id, await reply.reply())
+        except Exception:
+            logger.exception("Could not send background reply to %s", room_id)
+
+    async def _send_callback_reply(self, room_id: str, reply: Reply) -> None:
         if isinstance(reply, (dict, tuple)):
-            await self.send(room.room_id, str(reply))
+            await self.send(room_id, str(reply))
             if self.convert_files:
                 items = reply.items() if isinstance(reply, dict) else enumerate(reply)
                 for key, item in items:
@@ -280,13 +313,15 @@ class Bot:
                             if isinstance(reply, dict)
                             else f"index {key}"
                         )
-                        await self.send(room.room_id, f"Sending {label}:")
-                        await self._send_reply(room.room_id, item)
+                        await self.send(room_id, f"Sending {label}:")
+                        await self._send_reply(room_id, item)
         else:
-            await self._send_reply(room.room_id, reply)
+            await self._send_reply(room_id, reply)
 
     async def _send_reply(self, room_id: str, reply: Item) -> None:
-        if isinstance(reply, Path) and self.convert_files:
+        if isinstance(reply, FormattedText):
+            await self.send(room_id, reply.body, formatted_body=reply.formatted_body)
+        elif isinstance(reply, Path) and self.convert_files:
             if reply.is_dir():
                 with tempfile.TemporaryDirectory() as tmp:
                     archive = shutil.make_archive(
@@ -342,11 +377,18 @@ class Bot:
         logger.info("Stored %s", path)
         return path
 
-    async def send(self, room_id: str, text: str) -> None:
+    async def send(
+        self, room_id: str, text: str, formatted_body: str | None = None
+    ) -> None:
+        content = {"msgtype": "m.text", "body": text}
+        if formatted_body is not None:
+            content.update(
+                format="org.matrix.custom.html", formatted_body=formatted_body
+            )
         await self.client.room_send(
             room_id=room_id,
             message_type="m.room.message",
-            content={"msgtype": "m.text", "body": text},
+            content=content,
         )
         logger.info("Sent text to %s", room_id)
 
@@ -444,6 +486,10 @@ class Bot:
             )
             await self._sync_with_reconnect()
         finally:
+            for task in self._reply_tasks:
+                task.cancel()
+            if self._reply_tasks:
+                await asyncio.gather(*self._reply_tasks, return_exceptions=True)
             try:
                 if self.client.access_token:
                     response = await self.client.logout()
