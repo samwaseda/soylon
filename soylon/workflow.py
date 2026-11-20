@@ -1,6 +1,7 @@
 import asyncio
 import inspect
 from collections.abc import Callable
+from html import escape
 from typing import (
     Annotated,
     Any,
@@ -12,7 +13,7 @@ from typing import (
 from dotenv import load_dotenv
 
 from soylon import examples
-from soylon.bot import BackgroundReply, Bot, Message
+from soylon.bot import BackgroundReply, Bot, FormattedText, Message
 from soylon.helper import convert_input
 
 load_dotenv()
@@ -107,8 +108,13 @@ class _WorkflowSession:
     def help(self, arg: str = "") -> str:
         return self.HELP
 
-    def list(self, arg: str = "") -> str:
-        return "Available workflows:\n" + self._names()
+    def list(self, arg: str = "") -> FormattedText:
+        names = list(self.workflows)
+        body = "Available workflows:\n" + "\n".join(names)
+        formatted_body = "<p>Available workflows:</p>" + "".join(
+            f"<pre><code>{escape(name)}</code></pre>" for name in names
+        )
+        return FormattedText(body, formatted_body)
 
     def status(self, arg: str = "") -> str:
         if self.name is None:

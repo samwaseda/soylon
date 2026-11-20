@@ -77,6 +77,27 @@ class TestWorkflowConversations(unittest.IsolatedAsyncioTestCase):
         self.assertIn("'value': 'bob'", await self.send(bob("!status")))
         self.assertIn("'value': 'alice'", await self.send(alice("!status")))
 
+    async def test_list_shows_each_workflow_in_a_code_block(self):
+        self.bot.workflows["another-example"] = {
+            "function": Mock(),
+            "arguments": {},
+        }
+        transport = make_bot(self.bot)
+        await transport._on_message(ROOM, event(RoomMessageText, body="!list"))
+
+        content = transport.client.room_send.await_args.kwargs["content"]
+        self.assertEqual(
+            content,
+            {
+                "msgtype": "m.text",
+                "body": "Available workflows:\nexample\nanother-example",
+                "format": "org.matrix.custom.html",
+                "formatted_body": "<p>Available workflows:</p>"
+                "<pre><code>example</code></pre>"
+                "<pre><code>another-example</code></pre>",
+            },
+        )
+
     async def test_attachment_answer_belongs_to_initiating_conversation(self):
         await self.send(self.message("!run example"))
         attachment = SimpleNamespace(path=Path("/tmp/input.txt"))

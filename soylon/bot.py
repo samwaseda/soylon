@@ -92,6 +92,12 @@ class ReplyMetadata:
 
 
 @dataclass(frozen=True)
+class FormattedText:
+    body: str
+    formatted_body: str
+
+
+@dataclass(frozen=True)
 class Message:
     room_id: str
     sender: str
@@ -108,7 +114,7 @@ class Figure(Protocol):
     def savefig(self, *args, **kwargs) -> None: ...
 
 
-Item = str | Path | Figure | None
+Item = str | Path | Figure | FormattedText | None
 Reply = Item | dict[Any, Any] | tuple[Any, ...]
 
 
@@ -313,7 +319,9 @@ class Bot:
             await self._send_reply(room_id, reply)
 
     async def _send_reply(self, room_id: str, reply: Item) -> None:
-        if isinstance(reply, Path) and self.convert_files:
+        if isinstance(reply, FormattedText):
+            await self.send(room_id, reply.body, formatted_body=reply.formatted_body)
+        elif isinstance(reply, Path) and self.convert_files:
             if reply.is_dir():
                 with tempfile.TemporaryDirectory() as tmp:
                     archive = shutil.make_archive(
@@ -369,11 +377,18 @@ class Bot:
         logger.info("Stored %s", path)
         return path
 
-    async def send(self, room_id: str, text: str) -> None:
+    async def send(
+        self, room_id: str, text: str, formatted_body: str | None = None
+    ) -> None:
+        content = {"msgtype": "m.text", "body": text}
+        if formatted_body is not None:
+            content.update(
+                format="org.matrix.custom.html", formatted_body=formatted_body
+            )
         await self.client.room_send(
             room_id=room_id,
             message_type="m.room.message",
-            content={"msgtype": "m.text", "body": text},
+            content=content,
         )
         logger.info("Sent text to %s", room_id)
 
