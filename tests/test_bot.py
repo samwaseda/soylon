@@ -27,7 +27,7 @@ from nio import (
 from soylon.bot import Bot
 
 
-def make_bot(callback, storage_dir=None, welcome_message=None):
+def make_bot(callback, storage_dir=None, welcome_message=None, allowed_users=None):
     storage_dir = storage_dir or tempfile.mkdtemp()
     bot = Bot(
         callback,
@@ -36,6 +36,7 @@ def make_bot(callback, storage_dir=None, welcome_message=None):
         "pw",
         storage_dir,
         welcome_message=welcome_message,
+        allowed_users=allowed_users,
     )
     bot.client.download = AsyncMock(return_value=SimpleNamespace(body=b"data"))
     bot.client.room_send = AsyncMock()
@@ -65,6 +66,81 @@ def handle(bot, ev):
 
 
 class TestBot(unittest.TestCase):
+    def test_allowed_users_filter_messages_before_processing(self):
+        received = []
+        bot = make_bot(received.append, allowed_users={"@alice:example.org"})
+        bot.client.room_get_event = AsyncMock()
+        handle(
+            bot,
+            event(
+                RoomMessageMedia,
+                sender="@mallory:example.org",
+                source={
+                    "content": {"m.relates_to": {"m.in_reply_to": {"event_id": "$old"}}}
+                },
+            ),
+        )
+        handle(bot, event(RoomMessageText, sender="@alice:other.org"))
+        bot.client.download.assert_not_awaited()
+        bot.client.room_get_event.assert_not_awaited()
+        bot.client.room_send.assert_not_awaited()
+        self.assertEqual(received, [])
+
+        handle(bot, event(RoomMessageText))
+        self.assertEqual(
+            [message.sender for message in received], ["@alice:example.org"]
+        )
+
+    def test_empty_allowlist_denies_messages_and_invites(self):
+        received = []
+        bot = make_bot(received.append, allowed_users=set())
+        handle(bot, event(RoomMessageText))
+        invite = event(
+            InviteMemberEvent, state_key=bot.client.user_id, membership="invite"
+        )
+        asyncio.run(bot._on_invite(ROOM, invite))
+        self.assertEqual(received, [])
+        bot.client.join.assert_not_awaited()
+
+    def test_allowlist_filters_invites(self):
+        bot = make_bot(lambda m: None, allowed_users={"@alice:example.org"})
+        bot.client.join.return_value = JoinResponse(ROOM.room_id)
+        for sender in ("@mallory:example.org", "@alice:example.org"):
+            invite = event(
+                InviteMemberEvent,
+                sender=sender,
+                state_key=bot.client.user_id,
+                membership="invite",
+            )
+            asyncio.run(bot._on_invite(ROOM, invite))
+        bot.client.join.assert_awaited_once_with(ROOM.room_id)
+
+    def test_from_env_parses_allowlist(self):
+        base_env = {
+            "HOMESERVER": "https://example.org",
+            "USER_ID": "@bot:example.org",
+            "PASSWORD": "pw",
+        }
+        cases = (
+            (None, None),
+            ("", set()),
+            (
+                " @alice:example.org, ,@bob:example.org ",
+                {"@alice:example.org", "@bob:example.org"},
+            ),
+        )
+        for value, expected in cases:
+            with self.subTest(value=value):
+                env = dict(base_env)
+                if value is not None:
+                    env["ALLOWED_USERS"] = value
+                with (
+                    patch("soylon.bot.load_dotenv"),
+                    patch.dict("os.environ", env, clear=True),
+                ):
+                    bot = Bot.from_env(lambda m: None)
+                self.assertEqual(bot.allowed_users, expected)
+
     def test_sync_callback_reply_is_sent(self):
         bot = make_bot(lambda m: f"echo {m.body}")
         handle(bot, event(RoomMessageText))
@@ -170,9 +246,7 @@ class TestBot(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "notes.txt"
             path.write_text("hello")
-            figure = SimpleNamespace(
-                savefig=lambda buf, format: buf.write(b"PNGDATA")
-            )
+            figure = SimpleNamespace(savefig=lambda buf, format: buf.write(b"PNGDATA"))
             reply = {"text": "hello", "file": path, "figure": figure}
             bot = self._upload_bot()
             bot.callback = lambda message: reply
@@ -224,9 +298,7 @@ class TestBot(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "notes.txt"
             path.write_text("hello")
-            figure = SimpleNamespace(
-                savefig=lambda buf, format: buf.write(b"PNGDATA")
-            )
+            figure = SimpleNamespace(savefig=lambda buf, format: buf.write(b"PNGDATA"))
             reply = ("hello", path, "world", figure)
             bot = self._upload_bot()
             bot.callback = lambda message: reply
@@ -278,9 +350,7 @@ class TestBot(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "notes.txt"
             path.write_text("hello")
-            figure = SimpleNamespace(
-                savefig=lambda buf, format: buf.write(b"PNGDATA")
-            )
+            figure = SimpleNamespace(savefig=lambda buf, format: buf.write(b"PNGDATA"))
             reply = ("hello", path, figure)
             bot = self._upload_bot()
             bot.callback = lambda message: reply

@@ -110,7 +110,17 @@ class Figure(Protocol):
 
 Item = str | Path | Figure | None
 Reply = Item | dict[Any, Any] | tuple[Any, ...]
-Callback = Callable[[Message], Reply | Awaitable[Reply]]
+
+
+class BackgroundReply:
+    def __init__(self, reply: Callable[[], Awaitable[Reply]]):
+        self.reply = reply
+
+
+Callback = Callable[
+    [Message], Reply | BackgroundReply | Awaitable[Reply | BackgroundReply]
+]
+
 
 _KINDS = {"m.image": "image", "m.audio": "audio", "m.video": "video"}
 
@@ -137,6 +147,7 @@ class Bot:
         welcome_message: str | None = None,
         max_file_size: int | None = None,
         convert_files: bool = True,
+        allowed_users: set[str] | None = None,
     ) -> None:
         if max_file_size is not None and (
             not isinstance(max_file_size, int)
@@ -152,6 +163,8 @@ class Bot:
         self.storage_dir = Path(storage_dir)
         self.password = password
         self.convert_files = convert_files
+        self.allowed_users = None if allowed_users is None else set(allowed_users)
+        self._reply_tasks: set[asyncio.Task] = set()
         self.client = AsyncClient(homeserver, user_id)
         self.client.add_event_callback(self._on_invite, InviteMemberEvent)
 
@@ -176,6 +189,7 @@ class Bot:
                 "USER_ID=@my_workflow_bot:matrix.org\n"
                 "PASSWORD=my_password"
             )
+        allowed_users = os.environ.get("ALLOWED_USERS")
         return cls(
             callback,
             os.environ["HOMESERVER"],
@@ -185,10 +199,18 @@ class Bot:
             welcome_message=welcome_message,
             max_file_size=max_file_size,
             convert_files=convert_files,
+            allowed_users=(
+                {user.strip() for user in allowed_users.split(",") if user.strip()}
+                if allowed_users is not None
+                else None
+            ),
         )
 
     async def _on_invite(self, room: MatrixRoom, event: InviteMemberEvent) -> None:
         if event.state_key != self.client.user_id or event.membership != "invite":
+            return
+        if self.allowed_users is not None and event.sender not in self.allowed_users:
+            logger.warning("Ignoring invite from unauthorized sender %s", event.sender)
             return
         logger.info("Invited to %s, joining", room.room_id)
         response = await self.client.join(room.room_id)
@@ -199,6 +221,9 @@ class Bot:
 
     async def _on_message(self, room: MatrixRoom, event) -> None:
         if event.sender == self.client.user_id:
+            return
+        if self.allowed_users is not None and event.sender not in self.allowed_users:
+            logger.warning("Ignoring message from unauthorized sender %s", event.sender)
             return
         sent_at = datetime.datetime.fromtimestamp(event.server_timestamp / 1000)
         logger.info(f"Message '{event.body}' from {event.sender} in {room.room_id}")
@@ -253,8 +278,24 @@ class Bot:
         )
         if inspect.isawaitable(reply):
             reply = await reply
+        if isinstance(reply, BackgroundReply):
+            task = asyncio.create_task(self._send_background_reply(room.room_id, reply))
+            self._reply_tasks.add(task)
+            task.add_done_callback(self._reply_tasks.discard)
+            return
+        await self._send_callback_reply(room.room_id, reply)
+
+    async def _send_background_reply(
+        self, room_id: str, reply: BackgroundReply
+    ) -> None:
+        try:
+            await self._send_callback_reply(room_id, await reply.reply())
+        except Exception:
+            logger.exception("Could not send background reply to %s", room_id)
+
+    async def _send_callback_reply(self, room_id: str, reply: Reply) -> None:
         if isinstance(reply, (dict, tuple)):
-            await self.send(room.room_id, str(reply))
+            await self.send(room_id, str(reply))
             if self.convert_files:
                 items = reply.items() if isinstance(reply, dict) else enumerate(reply)
                 for key, item in items:
@@ -266,10 +307,10 @@ class Bot:
                             if isinstance(reply, dict)
                             else f"index {key}"
                         )
-                        await self.send(room.room_id, f"Sending {label}:")
-                        await self._send_reply(room.room_id, item)
+                        await self.send(room_id, f"Sending {label}:")
+                        await self._send_reply(room_id, item)
         else:
-            await self._send_reply(room.room_id, reply)
+            await self._send_reply(room_id, reply)
 
     async def _send_reply(self, room_id: str, reply: Item) -> None:
         if isinstance(reply, Path) and self.convert_files:
@@ -285,7 +326,7 @@ class Bot:
                 await self.send_file(room_id, reply)
         elif callable(getattr(reply, "savefig", None)) and self.convert_files:
             await self.send_figure(room_id, reply)
-        elif reply:
+        elif reply is not None and str(reply) != "":
             await self.send(room_id, str(reply))
 
     async def _reply_metadata(
@@ -430,6 +471,10 @@ class Bot:
             )
             await self._sync_with_reconnect()
         finally:
+            for task in self._reply_tasks:
+                task.cancel()
+            if self._reply_tasks:
+                await asyncio.gather(*self._reply_tasks, return_exceptions=True)
             try:
                 if self.client.access_token:
                     response = await self.client.logout()

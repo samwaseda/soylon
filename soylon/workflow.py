@@ -12,7 +12,7 @@ from typing import (
 from dotenv import load_dotenv
 
 from soylon import examples
-from soylon.bot import Bot, Message
+from soylon.bot import BackgroundReply, Bot, Message
 from soylon.helper import convert_input
 
 load_dotenv()
@@ -50,7 +50,7 @@ def collect_workflows(module) -> dict[str, dict[str, Any]]:
     return workflows
 
 
-class WorkflowBot:
+class _WorkflowSession:
     """Chat command handler holding the state of the currently loaded workflow."""
 
     HELP = (
@@ -69,7 +69,7 @@ class WorkflowBot:
         self.name: str | None = None
         self.inputs: dict[str, Any] = {}
         self.pending: str | None = None
-        self._commands: dict[str, Callable[[str], str]] = {
+        self._commands: dict[str, Callable] = {
             "!help": self.help,
             "!list": self.list,
             "!status": self.status,
@@ -89,11 +89,11 @@ class WorkflowBot:
     def _arguments(self) -> dict[str, dict[str, Any]]:
         return self.workflows[self.name]["arguments"]
 
-    def __call__(self, message: Message) -> str | None:
+    async def __call__(self, message: Message) -> Any:
         if self.pending is not None and not message.body.startswith("!"):
             if message.attachment:
-                return self.answer(message.attachment.path)
-            return self.answer(message.body.strip())
+                return await self.answer(message.attachment.path)
+            return await self.answer(message.body.strip())
         if not message.body.startswith("!"):
             return None
         self.pending = None
@@ -101,7 +101,8 @@ class WorkflowBot:
         handler = self._commands.get(command)
         if handler is None:
             return "Unknown command. Use !help for a list of commands."
-        return handler(arg.strip())
+        result = handler(arg.strip())
+        return await result if inspect.isawaitable(result) else result
 
     def help(self, arg: str = "") -> str:
         return self.HELP
@@ -132,7 +133,11 @@ class WorkflowBot:
     def _describe_inputs(self) -> str:
         lines = ["List of input:"]
         for key, info in self._arguments.items():
-            line = f"- {key}: {info['type'].__name__}"
+            dtype = info.get("type")
+            type_name = getattr(
+                dtype, "__name__", str(dtype) if dtype is not None else "any"
+            )
+            line = f"- {key}: {type_name}"
             if "default" in info:
                 line += f" (default: {info['default']})"
             lines.append(line)
@@ -157,7 +162,7 @@ class WorkflowBot:
         self.inputs[key] = value
         return f"Set argument {key} to {value} for workflow {self.name}."
 
-    def run(self, arg: str = "") -> str:
+    async def run(self, arg: str = "") -> Any:
         if arg:
             if arg not in self.workflows:
                 return f"Workflow {arg} not found."
@@ -167,14 +172,20 @@ class WorkflowBot:
         missing = [key for key in self._arguments if key not in self.inputs]
         if missing:
             return self._ask(missing[0])
+        name = self.name
+        function = self.workflows[name]["function"]
+        inputs = self.inputs.copy()
+        return BackgroundReply(lambda: self._execute(name, function, inputs))
+
+    async def _execute(
+        self, name: str, function: Callable, inputs: dict[str, Any]
+    ) -> Any:
         try:
-            result = self.workflows[self.name]["function"](**self.inputs)
+            result = await asyncio.to_thread(function, **inputs)
         except Exception as e:
             return f"Error executing workflow: {e}"
         if result is None:
-            return (
-                f"Workflow {self.name} executed successfully but has no return value."
-            )
+            return f"Workflow {name} executed successfully but has no return value."
         else:
             return result
 
@@ -184,14 +195,31 @@ class WorkflowBot:
         type_name = getattr(info.get("type"), "__name__", "any")
         return f"Please provide a value for {key} ({type_name}):"
 
-    def answer(self, raw: str) -> str:
+    async def answer(self, raw: str) -> Any:
         key = self.pending
         try:
             self.inputs[key] = self._convert(key, raw)
         except Exception as e:
             return f"Error converting value: {e}\n" + self._ask(key)
         self.pending = None
-        return self.run()
+        return await self.run()
+
+
+class WorkflowBot(_WorkflowSession):
+    """Chat command handler with a separate workflow state for each conversation."""
+
+    def __init__(self, workflows: dict[str, dict[str, Any]]):
+        super().__init__(workflows)
+        self._sessions: dict[tuple[str, str, str | None], _WorkflowSession] = {}
+
+    async def __call__(self, message: Message) -> Any:
+        identity = (message.room_id, message.sender, message.thread_id)
+        session = self._sessions.get(identity)
+        if session is None:
+            if not message.body.startswith("!"):
+                return None
+            session = self._sessions[identity] = _WorkflowSession(self.workflows)
+        return await session(message)
 
 
 if __name__ == "__main__":
