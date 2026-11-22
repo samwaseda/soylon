@@ -10,4 +10,4 @@ dependencies:
   - pip:
       - aiohttp-socks >=0.10
       - python-socks >=2.7
-      - matrix-nio =0.26.0
+      - matrix-nio >=0.26.0
