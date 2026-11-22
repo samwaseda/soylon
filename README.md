@@ -116,6 +116,16 @@ For a union, members are tried in order and the first successful conversion is
 returned. If none succeeds, `ValueError` is raised. A `None` member has no
 special string representation and does not convert string input.
 
+### Workflow inputs
+
+After loading a workflow with `!load <workflow_name>`, set one or more inputs
+with `!set`, for example `!set distance=10 time=2 mass=5`. Separate assignments
+with spaces and quote values containing spaces, as in
+`!set title="hello world" count=3`. All assignments must be valid; otherwise
+none are applied. A single assignment continues to accept its entire value
+as entered, including spaces. Text resembling another assignment (such as
+`key=value` after a space) is interpreted as another input.
+
 ## Logging
 
 `soylon` logs through the standard `logging` module (logger `soylon.bot`):

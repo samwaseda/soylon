@@ -77,6 +77,43 @@ class TestWorkflowConversations(unittest.IsolatedAsyncioTestCase):
         self.assertIn("'value': 'bob'", await self.send(bob("!status")))
         self.assertIn("'value': 'alice'", await self.send(alice("!status")))
 
+    async def test_set_multiple_values_and_run(self):
+        self.bot.workflows["example"]["arguments"].update(
+            {"count": {"type": int}, "enabled": {"type": bool}}
+        )
+        self.function.side_effect = lambda **kwargs: str(kwargs)
+        await self.send(self.message("!load example"))
+        reply = await self.send(
+            self.message('!set value="hello world=a" count=3 enabled=yes')
+        )
+        self.assertIn("Set argument count to 3", reply)
+        self.assertEqual(
+            await self.send(self.message("!run")),
+            "{'value': 'hello world=a', 'count': 3, 'enabled': True}",
+        )
+
+    async def test_set_batch_failure_does_not_change_inputs(self):
+        self.bot.workflows["example"]["arguments"]["count"] = {"type": int}
+        await self.send(self.message("!load example"))
+        await self.send(self.message("!set value=original"))
+        for command, error in (
+            ("!set value=changed count=bad", "Error converting value:"),
+            ("!set value=changed missing=1", "Argument missing not found"),
+            ("!set value=changed count=2 stray", "Invalid command format."),
+            ('!set value="unfinished count=2', "Invalid command format."),
+        ):
+            with self.subTest(command=command):
+                self.assertIn(error, await self.send(self.message(command)))
+                self.assertIn(
+                    "'value': 'original'", await self.send(self.message("!status"))
+                )
+                self.assertNotIn("'count':", await self.send(self.message("!status")))
+
+    async def test_set_single_value_preserves_spaces_quotes_and_equals(self):
+        await self.send(self.message("!load example"))
+        await self.send(self.message("!set value=it's a=b"))
+        self.assertEqual(await self.send(self.message("!run")), "result: it's a=b")
+
     async def test_list_shows_each_workflow_in_a_code_block(self):
         self.bot.workflows["another-example"] = {
             "function": Mock(),

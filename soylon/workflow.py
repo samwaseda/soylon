@@ -1,5 +1,7 @@
 import asyncio
 import inspect
+import re
+import shlex
 from collections.abc import Callable
 from html import escape
 from typing import (
@@ -58,7 +60,8 @@ class _WorkflowSession:
         "Commands:\n!list - List available workflows\n"
         "!status - Show the currently loaded workflow\n"
         "!load <workflow_name> - Load a specific workflow\n"
-        "!set <arg_name>=<arg_value> - Set an input\n"
+        "!set <arg_name>=<arg_value> [<arg_name>=<arg_value> ...] - Set inputs "
+        "(quote values containing spaces)\n"
         "!run [workflow_name] - Run the loaded (or the given) workflow"
     )
     NOT_LOADED = (
@@ -156,17 +159,39 @@ class _WorkflowSession:
     def set(self, arg: str) -> str:
         if self.name is None:
             return self.NOT_LOADED
-        key, sep, raw = arg.partition("=")
-        if not sep:
-            return "Invalid command format. Use !set <arg_name>=<arg_value>."
-        if key not in self._arguments:
-            return f"Argument {key} not found in workflow {self.name}."
+        invalid_format = (
+            "Invalid command format. Use !set <arg_name>=<arg_value> "
+            "[<arg_name>=<arg_value> ...]."
+        )
         try:
-            value = self._convert(key, raw)
-        except Exception as e:
-            return f"Error converting value: {e}"
-        self.inputs[key] = value
-        return f"Set argument {key} to {value} for workflow {self.name}."
+            tokens = shlex.split(arg)
+        except ValueError:
+            if re.search(r"(?:^|\s)[a-zA-Z_]\w*=['\"]", arg) and re.search(
+                r"\s+[a-zA-Z_]\w*=", arg
+            ):
+                return invalid_format
+            tokens = []
+
+        if any("=" in token for token in tokens[1:]):
+            assignments = [token.partition("=") for token in tokens]
+        else:
+            assignments = [arg.partition("=")]
+
+        updates = {}
+        for key, sep, raw in assignments:
+            if not sep:
+                return invalid_format
+            if key not in self._arguments:
+                return f"Argument {key} not found in workflow {self.name}."
+            try:
+                updates[key] = self._convert(key, raw)
+            except Exception as e:
+                return f"Error converting value: {e}"
+        self.inputs.update(updates)
+        return "\n".join(
+            f"Set argument {key} to {value} for workflow {self.name}."
+            for key, value in updates.items()
+        )
 
     async def run(self, arg: str = "") -> Any:
         if arg:
