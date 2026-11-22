@@ -246,9 +246,7 @@ class TestBot(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "notes.txt"
             path.write_text("hello")
-            figure = SimpleNamespace(
-                savefig=lambda buf, format: buf.write(b"PNGDATA")
-            )
+            figure = SimpleNamespace(savefig=lambda buf, format: buf.write(b"PNGDATA"))
             reply = {"text": "hello", "file": path, "figure": figure}
             bot = self._upload_bot()
             bot.callback = lambda message: reply
@@ -300,9 +298,7 @@ class TestBot(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "notes.txt"
             path.write_text("hello")
-            figure = SimpleNamespace(
-                savefig=lambda buf, format: buf.write(b"PNGDATA")
-            )
+            figure = SimpleNamespace(savefig=lambda buf, format: buf.write(b"PNGDATA"))
             reply = ("hello", path, "world", figure)
             bot = self._upload_bot()
             bot.callback = lambda message: reply
@@ -354,9 +350,7 @@ class TestBot(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "notes.txt"
             path.write_text("hello")
-            figure = SimpleNamespace(
-                savefig=lambda buf, format: buf.write(b"PNGDATA")
-            )
+            figure = SimpleNamespace(savefig=lambda buf, format: buf.write(b"PNGDATA"))
             reply = ("hello", path, figure)
             bot = self._upload_bot()
             bot.callback = lambda message: reply
